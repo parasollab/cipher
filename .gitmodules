@@ -1,0 +1,16 @@
+[submodule "Multi-Robot-OMPL"]
+	path = Multi-Robot-OMPL
+	url = git@github.com:courtneymcbeth/Multi-Robot-OMPL.git
+[submodule "db-CBS"]
+	path = db-CBS
+	url = git@github.com:courtneymcbeth/db-CBS.git
+	branch = mr_syclop
+[submodule "crocoddyl"]
+	path = crocoddyl
+	url = git@github.com:loco-3d/crocoddyl.git
+[submodule "eigenpy"]
+	path = eigenpy
+	url = https://github.com/stack-of-tasks/eigenpy.git
+[submodule "pinocchio"]
+	path = pinocchio
+	url = https://github.com/stack-of-tasks/pinocchio.git
