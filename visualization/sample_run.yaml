@@ -1,0 +1,198 @@
+# CIPHER sample planning log — 3D environment
+# Two robots crossing paths in a 4-cell environment.
+# Events: MAPF -> low-level paths -> segments -> collision ->
+#         grid refinement -> coupled planning -> MAPF (2) -> low-level paths (2) -> segments (2)
+
+header:
+  dimensions: 3
+
+  robots:
+    - id: r0
+      dynamics: first_order_unicycle
+      geometry: {type: sphere, radius: 0.15}
+      start: [0.25, 0.25, 0.0]
+      goal:  [3.75, 3.75, 0.0]
+    - id: r1
+      dynamics: first_order_unicycle
+      geometry: {type: sphere, radius: 0.15}
+      start: [3.75, 0.25, 0.0]
+      goal:  [0.25, 3.75, 0.0]
+
+  grid:
+    cells:
+      - id: c0
+        bounds:
+          min: [0.0, 0.0, -0.25]
+          max: [2.0, 2.0,  0.25]
+      - id: c1
+        bounds:
+          min: [2.0, 0.0, -0.25]
+          max: [4.0, 2.0,  0.25]
+      - id: c2
+        bounds:
+          min: [0.0, 2.0, -0.25]
+          max: [2.0, 4.0,  0.25]
+      - id: c3
+        bounds:
+          min: [2.0, 2.0, -0.25]
+          max: [4.0, 4.0,  0.25]
+
+events:
+  # -------------------------------------------------------------------------
+  # Round 1: initial high-level plan
+  # -------------------------------------------------------------------------
+  - type: mapf
+    paths:
+      r0: [c0, c3]       # r0 cuts diagonally through the centre
+      r1: [c1, c2]       # r1 does the same in the other direction
+
+  # -------------------------------------------------------------------------
+  # Round 1: low-level trajectories
+  # state:    [x, y, z, theta]   (first_order_unicycle — 4D state vector)
+  # control:  [v, omega]         (forward speed, angular velocity)
+  # duration: time to travel FROM this waypoint to the next (0.0 = terminal)
+  # -------------------------------------------------------------------------
+  - type: low_level_paths
+    paths:
+      r0:
+        - state:    [0.25, 0.25, 0.0, 0.785]
+          control:  [1.06, 0.0]
+          duration: 1.0
+        - state:    [1.0,  1.0,  0.0, 0.785]
+          control:  [1.77, 0.0]
+          duration: 0.8
+        - state:    [2.0,  2.0,  0.0, 0.785]
+          control:  [1.57, 0.0]
+          duration: 0.9
+        - state:    [3.0,  3.0,  0.0, 0.785]
+          control:  [1.77, 0.0]
+          duration: 0.6
+        - state:    [3.75, 3.75, 0.0, 0.785]
+          control:  [0.0,  0.0]
+          duration: 0.0
+      r1:
+        - state:    [3.75, 0.25, 0.0, 2.356]
+          control:  [1.06, 0.0]
+          duration: 1.0
+        - state:    [3.0,  1.0,  0.0, 2.356]
+          control:  [1.77, 0.0]
+          duration: 0.8
+        - state:    [2.0,  2.0,  0.0, 2.356]
+          control:  [1.57, 0.0]
+          duration: 0.9
+        - state:    [1.0,  3.0,  0.0, 2.356]
+          control:  [1.77, 0.0]
+          duration: 0.6
+        - state:    [0.25, 3.75, 0.0, 2.356]
+          control:  [0.0,  0.0]
+          duration: 0.0
+
+  # -------------------------------------------------------------------------
+  # Round 1: path segmentation (one segment per cell visited)
+  # -------------------------------------------------------------------------
+  - type: segments
+    segments:
+      r0:
+        - [0, 2]    # c0 portion: waypoints 0–2
+        - [2, 4]    # c3 portion: waypoints 2–4
+      r1:
+        - [0, 2]    # c1 portion
+        - [2, 4]    # c2 portion
+
+  # -------------------------------------------------------------------------
+  # Collision detected: robots meet at t=1.8s near (2, 2, 0)
+  # -------------------------------------------------------------------------
+  - type: collision
+    robots: [r0, r1]
+    time: 1.8
+
+  # -------------------------------------------------------------------------
+  # Refine the grid: split c3 into four sub-cells (the shared diagonal region)
+  # -------------------------------------------------------------------------
+  - type: grid_update
+    removed: [c3]
+    cells:
+      - id: c3a
+        bounds:
+          min: [2.0, 2.0, -0.25]
+          max: [3.0, 3.0,  0.25]
+      - id: c3b
+        bounds:
+          min: [3.0, 2.0, -0.25]
+          max: [4.0, 3.0,  0.25]
+      - id: c3c
+        bounds:
+          min: [2.0, 3.0, -0.25]
+          max: [3.0, 4.0,  0.25]
+      - id: c3d
+        bounds:
+          min: [3.0, 3.0, -0.25]
+          max: [4.0, 4.0,  0.25]
+
+  # -------------------------------------------------------------------------
+  # Coupled planning: r0 and r1 planned jointly through the collision region
+  # -------------------------------------------------------------------------
+  - type: coupled_planning
+    groups:
+      - robots: [r0, r1]
+        cells: [c0, c1, c3a, c3b, c3c, c3d]
+
+  # -------------------------------------------------------------------------
+  # Round 2: updated high-level plan routing around each other
+  # -------------------------------------------------------------------------
+  - type: mapf
+    paths:
+      r0: [c0, c3a, c3d]   # r0 takes a right-side route
+      r1: [c1, c3b, c2]    # r1 takes a left-side route
+
+  # -------------------------------------------------------------------------
+  # Round 2: new low-level paths that avoid each other
+  # -------------------------------------------------------------------------
+  - type: low_level_paths
+    paths:
+      r0:
+        - state:    [0.25, 0.25, 0.0, 0.5]
+          control:  [1.2,  0.0]
+          duration: 1.2
+        - state:    [1.5,  0.8,  0.0, 0.2]
+          control:  [1.1,  0.3]
+          duration: 0.9
+        - state:    [2.5,  2.2,  0.0, 1.1]
+          control:  [1.0,  -0.2]
+          duration: 0.8
+        - state:    [3.2,  2.8,  0.0, 0.9]
+          control:  [1.3,  0.0]
+          duration: 0.7
+        - state:    [3.75, 3.75, 0.0, 0.785]
+          control:  [0.0,  0.0]
+          duration: 0.0
+      r1:
+        - state:    [3.75, 0.25, 0.0, 2.7]
+          control:  [1.2,  0.0]
+          duration: 1.2
+        - state:    [2.8,  0.9,  0.0, 2.5]
+          control:  [1.1,  -0.3]
+          duration: 0.9
+        - state:    [2.2,  2.5,  0.0, 2.2]
+          control:  [1.0,  0.2]
+          duration: 0.8
+        - state:    [1.0,  3.2,  0.0, 2.356]
+          control:  [1.2,  0.0]
+          duration: 0.6
+        - state:    [0.25, 3.75, 0.0, 2.356]
+          control:  [0.0,  0.0]
+          duration: 0.0
+
+  # -------------------------------------------------------------------------
+  # Round 2: segmentation of the new paths
+  # -------------------------------------------------------------------------
+  - type: segments
+    segments:
+      r0:
+        - [0, 1]    # c0
+        - [1, 3]    # c3a
+        - [3, 4]    # c3d
+      r1:
+        - [0, 1]    # c1
+        - [1, 3]    # c3b
+        - [3, 4]    # c2
