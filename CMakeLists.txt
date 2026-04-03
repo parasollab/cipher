@@ -10,9 +10,9 @@ find_package(Eigen3 REQUIRED)
 find_package(Boost REQUIRED)
 find_package(fcl REQUIRED)
 
-add_subdirectory(Multi-Robot-OMPL EXCLUDE_FROM_ALL)
-# add_subdirectory(crocoddyl)
-# set(crocoddyl_DIR ${CMAKE_BINARY_DIR}/crocoddyl)
+# add_subdirectory(Multi-Robot-OMPL EXCLUDE_FROM_ALL)
+# find_package(crocoddyl REQUIRED)
+# set(crocoddyl_DIR /usr/local/lib/cmake/crocoddyl)
 # add_subdirectory(db-CBS EXCLUDE_FROM_ALL)
 
 add_executable(geometric_cipher
@@ -57,4 +57,6 @@ target_link_libraries(kinodynamic_decoupled_rrt PRIVATE ompl Eigen3::Eigen Boost
 #   Boost::headers
 #   idbastar::optimization
 #   ${FCL_LIBRARIES}
+#   -L/opt/homebrew/lib
+#   ipopt
 # )

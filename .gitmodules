@@ -14,4 +14,5 @@
 	url = https://github.com/stack-of-tasks/eigenpy.git
 [submodule "pinocchio"]
 	path = pinocchio
-	url = https://github.com/stack-of-tasks/pinocchio.git
+	url = git@github.com:imngui/pinocchio.git
+	branch = mac
