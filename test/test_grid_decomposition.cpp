@@ -16,6 +16,95 @@ static GridDecompositionImpl makeDecomp(int length, int dim)
     return GridDecompositionImpl(length, dim, bounds);
 }
 
+// Helper: build a decomposition from region_size
+static GridDecompositionImpl makeDecompFromSize(int dim, double low, double high, double region_size)
+{
+    ompl::base::RealVectorBounds bounds(dim);
+    for (int i = 0; i < dim; ++i)
+    {
+        bounds.low[i]  = low;
+        bounds.high[i] = high;
+    }
+    return GridDecompositionImpl(dim, bounds, region_size);
+}
+
+// ─── region_size constructor tests ───────────────────────────────────────────
+
+BOOST_AUTO_TEST_CASE(RegionSize2D_CellsAtMostRegionSize)
+{
+    // [0,1]^2 with region_size=0.25 → length=4, 16 regions
+    auto d = makeDecompFromSize(2, 0.0, 1.0, 0.25);
+    BOOST_CHECK_EQUAL(d.getNumRegions(), 16);
+
+    // Every region's extent in each dimension should be <= region_size
+    for (int rid = 0; rid < d.getNumRegions(); ++rid)
+    {
+        const auto& b = d.getBoundsForRegion(rid);
+        BOOST_CHECK_LE(b.high[0] - b.low[0], 0.25 + 1e-9);
+        BOOST_CHECK_LE(b.high[1] - b.low[1], 0.25 + 1e-9);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(RegionSize2D_NonDivisibleExtent)
+{
+    // [0,1]^2 with region_size=0.3 → ceil(1.0/0.3)=4 cells → length=4, 16 regions
+    auto d = makeDecompFromSize(2, 0.0, 1.0, 0.3);
+    BOOST_CHECK_EQUAL(d.getNumRegions(), 16);
+}
+
+BOOST_AUTO_TEST_CASE(RegionSize2D_LargeRegionSize)
+{
+    // region_size >= extent → length=1, 1 region covers the whole space
+    auto d = makeDecompFromSize(2, 0.0, 1.0, 2.0);
+    BOOST_CHECK_EQUAL(d.getNumRegions(), 1);
+    const auto& b = d.getBoundsForRegion(0);
+    BOOST_CHECK_CLOSE(b.low[0],  0.0, 1e-9);
+    BOOST_CHECK_CLOSE(b.high[0], 1.0, 1e-9);
+}
+
+BOOST_AUTO_TEST_CASE(RegionSize2D_AsymmetricBounds)
+{
+    // X: [0,4], Y: [0,1], region_size=1.0 → length=max(4,1)=4, 16 regions
+    ompl::base::RealVectorBounds bounds(2);
+    bounds.low[0]  = 0.0; bounds.high[0] = 4.0;
+    bounds.low[1]  = 0.0; bounds.high[1] = 1.0;
+    GridDecompositionImpl d(2, bounds, 1.0);
+    BOOST_CHECK_EQUAL(d.getNumRegions(), 16);
+}
+
+BOOST_AUTO_TEST_CASE(RegionSize2D_MatchesLengthConstructor)
+{
+    // Both constructors with equivalent parameters should produce the same grid
+    auto dSize   = makeDecompFromSize(2, 0.0, 1.0, 0.25);  // length=4
+    auto dLength = makeDecomp(4, 2);
+    BOOST_CHECK_EQUAL(dSize.getNumRegions(),  dLength.getNumRegions());
+    BOOST_CHECK_EQUAL(dSize.getDimension(),   dLength.getDimension());
+    for (int rid = 0; rid < dSize.getNumRegions(); ++rid)
+    {
+        const auto& bs = dSize.getBoundsForRegion(rid);
+        const auto& bl = dLength.getBoundsForRegion(rid);
+        for (int i = 0; i < 2; ++i)
+        {
+            BOOST_CHECK_CLOSE(bs.low[i],  bl.low[i],  1e-9);
+            BOOST_CHECK_CLOSE(bs.high[i], bl.high[i], 1e-9);
+        }
+    }
+}
+
+BOOST_AUTO_TEST_CASE(RegionSize3D_CellsAtMostRegionSize)
+{
+    // [0,1]^3 with region_size=0.5 → length=2, 8 regions
+    auto d = makeDecompFromSize(3, 0.0, 1.0, 0.5);
+    BOOST_CHECK_EQUAL(d.getNumRegions(), 8);
+
+    for (int rid = 0; rid < d.getNumRegions(); ++rid)
+    {
+        const auto& b = d.getBoundsForRegion(rid);
+        for (int i = 0; i < 3; ++i)
+            BOOST_CHECK_LE(b.high[i] - b.low[i], 0.5 + 1e-9);
+    }
+}
+
 // ─── 2D tests ────────────────────────────────────────────────────────────────
 
 BOOST_AUTO_TEST_CASE(Decompose2D_ChildCount)

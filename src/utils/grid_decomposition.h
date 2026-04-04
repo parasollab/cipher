@@ -9,6 +9,7 @@
 class GridDecompositionImpl : public ompl::control::GridDecomposition, public DecompositionImpl {
   public:
     GridDecompositionImpl(const int length, const int dim, const ompl::base::RealVectorBounds& bounds);
+    GridDecompositionImpl(const int dim, const ompl::base::RealVectorBounds& bounds, double region_size);
 
     // Bridge overrides: satisfy DecompositionImpl's pure virtuals using GridDecomposition's implementations
     int getNumRegions() const override { return ompl::control::GridDecomposition::getNumRegions(); }

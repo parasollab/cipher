@@ -2,9 +2,32 @@
 
 #include <ompl/base/spaces/SE2StateSpace.h>
 #include <ompl/base/spaces/SE3StateSpace.h>
+#include <cmath>
+
+static int computeLength(int dim, const ompl::base::RealVectorBounds& bounds, double region_size)
+{
+    int length = 1;
+    for (int i = 0; i < dim; ++i)
+    {
+        int cells = static_cast<int>(std::ceil((bounds.high[i] - bounds.low[i]) / region_size));
+        length = std::max(length, cells);
+    }
+    return length;
+}
 
 GridDecompositionImpl::GridDecompositionImpl(const int length, const int dim, const ompl::base::RealVectorBounds& bounds)
-        : ompl::control::GridDecomposition(length, dim, bounds), nextVirtualId_(0)
+        : ompl::control::GridDecomposition(length, dim, bounds),
+          DecompositionImpl(),
+          nextVirtualId_(0)
+{
+    nextVirtualId_ = ompl::control::GridDecomposition::getNumRegions();
+}
+
+GridDecompositionImpl::GridDecompositionImpl(const int dim, const ompl::base::RealVectorBounds& bounds, double region_size)
+        : ompl::control::GridDecomposition(computeLength(dim, bounds, region_size), dim, bounds),
+          DecompositionImpl(),
+
+          nextVirtualId_(0)
 {
     nextVirtualId_ = ompl::control::GridDecomposition::getNumRegions();
 }

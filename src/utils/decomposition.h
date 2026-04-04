@@ -9,6 +9,10 @@
 
 class DecompositionImpl {
   public:
+    // Constructor based on robot size and environment bounds
+    DecompositionImpl(int dim, const ompl::base::RealVectorBounds& bounds, double region_size) {};
+    DecompositionImpl() = default;
+
     virtual ~DecompositionImpl() = default;
 
     // OMPL Decomposition interface
