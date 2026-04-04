@@ -1,10 +1,13 @@
-#include "decomposition.h"
+#include "grid_decomposition.h"
 
 #include <ompl/base/spaces/SE2StateSpace.h>
 #include <ompl/base/spaces/SE3StateSpace.h>
 
 GridDecompositionImpl::GridDecompositionImpl(const int length, const int dim, const ompl::base::RealVectorBounds& bounds)
-        : ompl::control::GridDecomposition(length, dim, bounds) {}
+        : ompl::control::GridDecomposition(length, dim, bounds), nextVirtualId_(0)
+{
+    nextVirtualId_ = ompl::control::GridDecomposition::getNumRegions();
+}
 
 void GridDecompositionImpl::project(const ompl::base::State* s, std::vector<double>& coord) const
 {
@@ -85,4 +88,42 @@ void GridDecompositionImpl::getNeighbors(int rid, std::vector<int>& neighbors) c
             }
         }
     }
+}
+
+void GridDecompositionImpl::Decompose(int rid)
+{
+    // Break the region into smaller subregions (split into 4 in 2D, 8 in 3D).
+    // Works on both flat-grid IDs and virtual IDs from prior Decompose calls.
+    const ompl::base::RealVectorBounds& parentBounds = getBoundsForRegion(rid);
+
+    std::vector<double> mid(dimension_);
+    for (int i = 0; i < dimension_; ++i)
+        mid[i] = 0.5 * (parentBounds.low[i] + parentBounds.high[i]);
+
+    const int numChildren = 1 << dimension_;  // 4 in 2D, 8 in 3D
+    std::vector<int> childIds;
+    childIds.reserve(numChildren);
+
+    for (int q = 0; q < numChildren; ++q)
+    {
+        auto sb = std::make_shared<ompl::base::RealVectorBounds>(dimension_);
+        for (int i = 0; i < dimension_; ++i)
+        {
+            if (q & (1 << i))  // bit i: 1 → upper half, 0 → lower half
+            {
+                sb->low[i]  = mid[i];
+                sb->high[i] = parentBounds.high[i];
+            }
+            else
+            {
+                sb->low[i]  = parentBounds.low[i];
+                sb->high[i] = mid[i];
+            }
+        }
+        int childId = nextVirtualId_++;
+        virtualBounds_[childId] = std::move(sb);
+        childIds.push_back(childId);
+    }
+
+    children_[rid] = std::move(childIds);
 }

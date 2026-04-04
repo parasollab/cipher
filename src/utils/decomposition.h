@@ -1,23 +1,29 @@
-#ifndef GRID_DECOMPOSITION_IMPL_H
-#define GRID_DECOMPOSITION_IMPL_H
+#ifndef DECOMPOSITION_IMPL_H
+#define DECOMPOSITION_IMPL_H
 
-#include <ompl/control/planners/syclop/GridDecomposition.h>
+#include <ompl/base/spaces/RealVectorBounds.h>
+#include <ompl/base/StateSampler.h>
+#include <ompl/base/State.h>
+#include <ompl/util/RandomNumbers.h>
+#include <vector>
 
-class GridDecompositionImpl : public ompl::control::GridDecomposition {
+class DecompositionImpl {
   public:
-    GridDecompositionImpl(const int length, const int dim, const ompl::base::RealVectorBounds& bounds);
+    virtual ~DecompositionImpl() = default;
 
-    void project(const ompl::base::State* s, std::vector<double>& coord) const override;
+    // OMPL Decomposition interface
+    virtual int getNumRegions() const = 0;
+    virtual int getDimension() const = 0;
+    virtual const ompl::base::RealVectorBounds& getBounds() const = 0;
+    virtual double getRegionVolume(int rid) = 0;
+    virtual int locateRegion(const ompl::base::State* s) const = 0;
+    virtual void project(const ompl::base::State* s, std::vector<double>& coord) const = 0;
+    virtual void getNeighbors(int rid, std::vector<int>& neighbors) const = 0;
+    virtual void sampleFromRegion(int rid, ompl::RNG& rng, std::vector<double>& coord) const = 0;
+    virtual void sampleFullState(const ompl::base::StateSamplerPtr& sampler, const std::vector<double>& coord, ompl::base::State* s) const = 0;
 
-    void sampleFullState(const ompl::base::StateSamplerPtr& sampler, const std::vector<double>& coord, ompl::base::State* s) const override;
-
-    // Public wrapper to access protected getRegionBounds method
-    const ompl::base::RealVectorBounds& getRegionBoundsPublic(int rid) const {
-        return getRegionBounds(rid);
-    }
-
-    // Override to only return cardinal neighbors (no diagonals)
-    void getNeighbors(int rid, std::vector<int>& neighbors) const override;
+    // Extended interface
+    virtual void Decompose(int rid) = 0;
 };
 
-#endif // GRID_DECOMPOSITION_IMPL_H
+#endif // DECOMPOSITION_IMPL_H
