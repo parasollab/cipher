@@ -62,6 +62,23 @@ target_link_libraries(test_grid_decomposition PRIVATE
 )
 add_test(NAME GridDecompositionTests COMMAND test_grid_decomposition)
 
+add_executable(test_cbs
+  test/test_cbs.cpp
+  src/mapf/cbs.cpp
+  src/utils/grid_decomposition.cpp
+)
+target_include_directories(test_cbs PRIVATE
+  ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
+)
+target_link_libraries(test_cbs PRIVATE
+  ompl
+  Eigen3::Eigen
+  Boost::unit_test_framework
+)
+add_test(NAME CBSTests COMMAND test_cbs)
+
 add_executable(kinodynamic_cipher
   src/kinodynamic/cipher_kino.cpp
 )
