@@ -7,13 +7,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Eigen3 REQUIRED)
-find_package(Boost REQUIRED)
+find_package(Boost REQUIRED COMPONENTS unit_test_framework)
 find_package(fcl REQUIRED)
 
+set(crocoddyl_DIR /usr/local/lib/cmake/crocoddyl)
+find_package(crocoddyl REQUIRED)
+
 add_subdirectory(Multi-Robot-OMPL EXCLUDE_FROM_ALL)
-# add_subdirectory(crocoddyl)
-# set(crocoddyl_DIR ${CMAKE_BINARY_DIR}/crocoddyl)
-# add_subdirectory(db-CBS EXCLUDE_FROM_ALL)
+add_subdirectory(db-CBS EXCLUDE_FROM_ALL)
 
 add_executable(geometric_cipher
   src/geometric/cipher.cpp
@@ -43,8 +44,6 @@ target_include_directories(kinodynamic_decoupled_rrt PRIVATE
 )
 target_link_libraries(kinodynamic_decoupled_rrt PRIVATE ompl Eigen3::Eigen Boost::headers)
 
-find_package(Boost REQUIRED COMPONENTS unit_test_framework)
-
 enable_testing()
 
 add_executable(test_grid_decomposition
@@ -63,18 +62,20 @@ target_link_libraries(test_grid_decomposition PRIVATE
 )
 add_test(NAME GridDecompositionTests COMMAND test_grid_decomposition)
 
-# add_executable(kinodynamic_cipher
-#   src/kinodynamic/cipher_kino.cpp
-# )
-# target_include_directories(kinodynamic_cipher PRIVATE
-#   ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
-#   ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
-#   ${CMAKE_SOURCE_DIR}/db-CBS/src
-# )
-# target_link_libraries(kinodynamic_cipher PRIVATE
-#   ompl
-#   Eigen3::Eigen
-#   Boost::headers
-#   idbastar::optimization
-#   ${FCL_LIBRARIES}
-# )
+add_executable(kinodynamic_cipher
+  src/kinodynamic/cipher_kino.cpp
+)
+target_include_directories(kinodynamic_cipher PRIVATE
+  ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_SOURCE_DIR}/db-CBS/src
+)
+target_link_libraries(kinodynamic_cipher PRIVATE
+  ompl
+  Eigen3::Eigen
+  Boost::headers
+  idbastar::optimization
+  ${FCL_LIBRARIES}
+  -L/opt/homebrew/lib
+  ipopt
+)
