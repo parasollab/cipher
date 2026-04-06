@@ -56,6 +56,26 @@ target_link_libraries(geometric_decoupled_rrt PRIVATE
   ${FCL_LIBRARIES}
 )
 
+add_executable(geometric_coupled_rrt
+  src/geometric/coupled_rrt.cpp
+  db-CBS/src/robots.cpp
+)
+target_include_directories(geometric_coupled_rrt PRIVATE
+  ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_SOURCE_DIR}/db-CBS/src
+  ${YAML_INCLUDE_DIRS}
+  ${FCL_INCLUDE_DIRS}
+)
+target_link_directories(geometric_coupled_rrt PRIVATE ${YAML_LIBRARY_DIRS})
+target_link_libraries(geometric_coupled_rrt PRIVATE
+  ompl
+  Eigen3::Eigen
+  Boost::program_options
+  ${YAML_LIBRARIES}
+  ${FCL_LIBRARIES}
+)
+
 add_executable(kinodynamic_decoupled_rrt
   src/kinodynamic/decoupled_rrt.cpp
 )

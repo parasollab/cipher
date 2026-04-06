@@ -1,0 +1,3 @@
+# Configuration file for coupled_rrt planner
+
+goal_threshold: 1.5 # Distance threshold to consider goal reached
