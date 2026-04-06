@@ -12,11 +12,19 @@ find_package(fcl REQUIRED)
 find_package(PkgConfig)
 pkg_check_modules(YAML REQUIRED yaml-cpp)
 
-# set(crocoddyl_DIR /usr/local/lib/cmake/crocoddyl)
-# find_package(crocoddyl REQUIRED)
+set(crocoddyl_DIR /usr/local/lib/cmake/crocoddyl)
+find_package(crocoddyl REQUIRED)
 
 add_subdirectory(Multi-Robot-OMPL EXCLUDE_FROM_ALL)
-# add_subdirectory(db-CBS EXCLUDE_FROM_ALL)
+add_subdirectory(db-CBS EXCLUDE_FROM_ALL)
+
+include_directories(
+  ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_SOURCE_DIR}/db-CBS/src
+  ${CMAKE_SOURCE_DIR}/db-CBS/dynoplan/include
+  ${CMAKE_SOURCE_DIR}/db-CBS/dynoplan/dynobench/include
+)
 
 add_executable(geometric_cipher
   src/geometric/cipher.cpp
@@ -92,20 +100,20 @@ target_link_libraries(test_cbs PRIVATE
 )
 add_test(NAME CBSTests COMMAND test_cbs)
 
-# add_executable(kinodynamic_cipher
-#   src/kinodynamic/cipher_kino.cpp
-# )
-# target_include_directories(kinodynamic_cipher PRIVATE
-#   ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
-#   ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
-#   ${CMAKE_SOURCE_DIR}/db-CBS/src
-# )
-# target_link_libraries(kinodynamic_cipher PRIVATE
-#   ompl
-#   Eigen3::Eigen
-#   Boost::headers
-#   idbastar::optimization
-#   ${FCL_LIBRARIES}
-#   -L/opt/homebrew/lib
-#   ipopt
-# )
+add_executable(kinodynamic_cipher
+  src/kinodynamic/cipher_kino.cpp
+)
+target_include_directories(kinodynamic_cipher PRIVATE
+  ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_SOURCE_DIR}/db-CBS/src
+)
+target_link_libraries(kinodynamic_cipher PRIVATE
+  ompl
+  Eigen3::Eigen
+  Boost::headers
+  idbastar::optimization
+  ${FCL_LIBRARIES}
+  -L/opt/homebrew/lib
+  ipopt
+)
