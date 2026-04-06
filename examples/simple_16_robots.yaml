@@ -1,0 +1,92 @@
+# 16-robot scenario in a 30x30 environment
+# 4 robots per edge, each heading to the opposite edge (cross pattern)
+# Robots navigate around obstacles to reach their goals
+
+environment:
+  min: [0.0, 0.0]
+  max: [30.0, 30.0]
+  obstacles:
+    - type: box
+      center: [10, 10]
+      size: [2, 2]
+    - type: box
+      center: [20, 10]
+      size: [2, 2]
+    - type: box
+      center: [15, 15]
+      size: [3, 3]
+    - type: box
+      center: [10, 20]
+      size: [2, 2]
+    - type: box
+      center: [20, 20]
+      size: [2, 2]
+
+robots:
+  # --- Bottom edge (y=2), heading to top edge (y=28) ---
+  - type: unicycle_first_order_0_sphere
+    start: [5.0,  2.0, 1.5708]
+    goal:  [25.0, 28.0, 1.5708]
+
+  - type: unicycle_first_order_0_sphere
+    start: [12.0, 2.0, 1.5708]
+    goal:  [18.0, 28.0, 1.5708]
+
+  - type: unicycle_first_order_0_sphere
+    start: [18.0, 2.0, 1.5708]
+    goal:  [12.0, 28.0, 1.5708]
+
+  - type: unicycle_first_order_0_sphere
+    start: [25.0, 2.0, 1.5708]
+    goal:  [5.0,  28.0, 1.5708]
+
+  # --- Top edge (y=28), heading to bottom edge (y=2) ---
+  - type: unicycle_first_order_0_sphere
+    start: [5.0,  28.0, -1.5708]
+    goal:  [25.0, 2.0, -1.5708]
+
+  - type: unicycle_first_order_0_sphere
+    start: [12.0, 28.0, -1.5708]
+    goal:  [18.0, 2.0, -1.5708]
+
+  - type: unicycle_first_order_0_sphere
+    start: [18.0, 28.0, -1.5708]
+    goal:  [12.0, 2.0, -1.5708]
+
+  - type: unicycle_first_order_0_sphere
+    start: [25.0, 28.0, -1.5708]
+    goal:  [5.0,  2.0, -1.5708]
+
+  # --- Left edge (x=2), heading to right edge (x=28) ---
+  - type: unicycle_first_order_0_sphere
+    start: [2.0, 5.0,  0.0]
+    goal:  [28.0, 25.0, 0.0]
+
+  - type: unicycle_first_order_0_sphere
+    start: [2.0, 12.0, 0.0]
+    goal:  [28.0, 18.0, 0.0]
+
+  - type: unicycle_first_order_0_sphere
+    start: [2.0, 18.0, 0.0]
+    goal:  [28.0, 12.0, 0.0]
+
+  - type: unicycle_first_order_0_sphere
+    start: [2.0, 25.0, 0.0]
+    goal:  [28.0, 5.0,  0.0]
+
+  # --- Right edge (x=28), heading to left edge (x=2) ---
+  - type: unicycle_first_order_0_sphere
+    start: [28.0, 5.0,  3.14159]
+    goal:  [2.0, 25.0,  3.14159]
+
+  - type: unicycle_first_order_0_sphere
+    start: [28.0, 12.0, 3.14159]
+    goal:  [2.0, 18.0,  3.14159]
+
+  - type: unicycle_first_order_0_sphere
+    start: [28.0, 18.0, 3.14159]
+    goal:  [2.0, 12.0,  3.14159]
+
+  - type: unicycle_first_order_0_sphere
+    start: [28.0, 25.0, 3.14159]
+    goal:  [2.0, 5.0,   3.14159]
