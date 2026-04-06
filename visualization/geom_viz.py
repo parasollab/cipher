@@ -53,30 +53,6 @@ _DEFAULT_GEOM = {'shape': 'sphere', 'radius': 0.2}
 # Geometry helpers
 # ---------------------------------------------------------------------------
 
-def arc_lengths(states):
-    """
-    Compute cumulative arc-length timestamps for a sequence of [x, y, yaw] states.
-    Returns array of length len(states) with t[0]=0 and t[i] = sum of Euclidean
-    distances up to state i.
-    """
-    pts = np.array([[s[0], s[1]] for s in states], dtype=float)
-    dists = np.linalg.norm(np.diff(pts, axis=0), axis=1)
-    return np.concatenate([[0.0], np.cumsum(dists)])
-
-
-def interpolate_state(states, times, t):
-    """
-    Linearly interpolate a full [x, y, yaw] state at time t along a path
-    whose states have cumulative arc-length timestamps in `times`.
-    """
-    t = np.clip(t, times[0], times[-1])
-    idx = np.searchsorted(times, t, side='right') - 1
-    idx = min(idx, len(states) - 2)
-    t0, t1 = times[idx], times[idx + 1]
-    s0 = np.array(states[idx],   dtype=float)
-    s1 = np.array(states[idx+1], dtype=float)
-    alpha = (t - t0) / (t1 - t0) if (t1 - t0) > 0 else 0.0
-    return s0 + alpha * (s1 - s0)
 
 
 # ---------------------------------------------------------------------------
@@ -117,9 +93,7 @@ class GeomVisualizer:
                 file=sys.stderr,
             )
 
-        # Compute arc-length timestamps per robot
-        self.times = [arc_lengths(p) for p in self.paths]
-        self.total_time = max((t[-1] for t in self.times if len(t) > 0), default=0.0)
+        self.total_steps = max((len(p) for p in self.paths), default=0)
 
         # Figure
         self.fig, self.ax = plt.subplots(figsize=(9, 9))
@@ -243,11 +217,10 @@ class GeomVisualizer:
         return patch
 
     def _animate(self):
-        if self.total_time <= 0 or not self.paths:
+        if self.total_steps == 0 or not self.paths:
             return
 
-        dt_real = 1.0 / ANIM_FPS
-        dt_sim  = self.anim_speed / ANIM_FPS
+        dt_real = 1.0 / (ANIM_FPS * self.anim_speed)
 
         # Pre-resolve geometry for each robot
         robot_geoms = []
@@ -260,17 +233,16 @@ class GeomVisualizer:
 
         self._advance_flag = False
         patches = {}
-        t = 0.0
 
-        while t <= self.total_time + dt_sim:
+        for step in range(self.total_steps):
             if not plt.fignum_exists(self.fig.number):
                 return
             if self._advance_flag:
                 break
 
-            for i, (path, times) in enumerate(zip(self.paths, self.times)):
+            for i, path in enumerate(self.paths):
                 color = ROBOT_COLORS[i % len(ROBOT_COLORS)]
-                state = interpolate_state(path, times, min(t, times[-1]))
+                state = path[min(step, len(path) - 1)]
                 x, y = state[0], state[1]
                 yaw = state[2] if len(state) > 2 else 0.0
                 geom = robot_geoms[i] if i < len(robot_geoms) else _DEFAULT_GEOM
@@ -287,7 +259,6 @@ class GeomVisualizer:
 
             plt.draw()
             plt.pause(dt_real)
-            t += dt_sim
 
         for p in patches.values():
             try:

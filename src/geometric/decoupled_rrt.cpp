@@ -80,6 +80,7 @@ public:
             fcl::CollisionResult<float> result;
             fcl::collide(&co1, &co2, request, result);
             bool collision = result.isCollision();
+
             if (collision) {
                 return false;
             }
