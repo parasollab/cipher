@@ -7,14 +7,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Eigen3 REQUIRED)
-find_package(Boost REQUIRED COMPONENTS unit_test_framework)
+find_package(Boost REQUIRED COMPONENTS unit_test_framework program_options)
 find_package(fcl REQUIRED)
+find_package(PkgConfig)
+pkg_check_modules(YAML REQUIRED yaml-cpp)
 
-set(crocoddyl_DIR /usr/local/lib/cmake/crocoddyl)
-find_package(crocoddyl REQUIRED)
+# set(crocoddyl_DIR /usr/local/lib/cmake/crocoddyl)
+# find_package(crocoddyl REQUIRED)
 
 add_subdirectory(Multi-Robot-OMPL EXCLUDE_FROM_ALL)
-add_subdirectory(db-CBS EXCLUDE_FROM_ALL)
+# add_subdirectory(db-CBS EXCLUDE_FROM_ALL)
 
 add_executable(geometric_cipher
   src/geometric/cipher.cpp
@@ -28,12 +30,23 @@ target_link_libraries(geometric_cipher PRIVATE ompl Eigen3::Eigen Boost::headers
 
 add_executable(geometric_decoupled_rrt
   src/geometric/decoupled_rrt.cpp
+  db-CBS/src/robots.cpp
 )
 target_include_directories(geometric_decoupled_rrt PRIVATE
   ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
   ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_SOURCE_DIR}/db-CBS/src
+  ${YAML_INCLUDE_DIRS}
+  ${FCL_INCLUDE_DIRS}
 )
-target_link_libraries(geometric_decoupled_rrt PRIVATE ompl Eigen3::Eigen Boost::headers)
+target_link_directories(geometric_decoupled_rrt PRIVATE ${YAML_LIBRARY_DIRS})
+target_link_libraries(geometric_decoupled_rrt PRIVATE
+  ompl
+  Eigen3::Eigen
+  Boost::program_options
+  ${YAML_LIBRARIES}
+  ${FCL_LIBRARIES}
+)
 
 add_executable(kinodynamic_decoupled_rrt
   src/kinodynamic/decoupled_rrt.cpp
@@ -79,20 +92,20 @@ target_link_libraries(test_cbs PRIVATE
 )
 add_test(NAME CBSTests COMMAND test_cbs)
 
-add_executable(kinodynamic_cipher
-  src/kinodynamic/cipher_kino.cpp
-)
-target_include_directories(kinodynamic_cipher PRIVATE
-  ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
-  ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
-  ${CMAKE_SOURCE_DIR}/db-CBS/src
-)
-target_link_libraries(kinodynamic_cipher PRIVATE
-  ompl
-  Eigen3::Eigen
-  Boost::headers
-  idbastar::optimization
-  ${FCL_LIBRARIES}
-  -L/opt/homebrew/lib
-  ipopt
-)
+# add_executable(kinodynamic_cipher
+#   src/kinodynamic/cipher_kino.cpp
+# )
+# target_include_directories(kinodynamic_cipher PRIVATE
+#   ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
+#   ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
+#   ${CMAKE_SOURCE_DIR}/db-CBS/src
+# )
+# target_link_libraries(kinodynamic_cipher PRIVATE
+#   ompl
+#   Eigen3::Eigen
+#   Boost::headers
+#   idbastar::optimization
+#   ${FCL_LIBRARIES}
+#   -L/opt/homebrew/lib
+#   ipopt
+# )
