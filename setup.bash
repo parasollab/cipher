@@ -73,7 +73,24 @@ make -j4
 make install
 cd "$SCRIPT_DIR"
 
-echo -e "\n${GREEN}Step 4: Building main project${NC}"
+echo -e "\n${GREEN}Step 4: Building Multi-Robot-OMPL${NC}"
+echo "Dependencies: Boost (system)"
+
+# Build and install Multi-Robot-OMPL (ompl)
+cd Multi-Robot-OMPL
+mkdir -p build
+cd build
+cmake .. \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
+  -DCMAKE_PREFIX_PATH="$INSTALL_PREFIX" \
+  -DOMPL_REGISTRATION=OFF \
+  -DPYTHON_BINDINGS=OFF
+make -j4
+make install
+cd "$SCRIPT_DIR"
+
+echo -e "\n${GREEN}Step 5: Building main project${NC}"
 
 # Now build the main project with all dependencies in CMAKE_PREFIX_PATH
 mkdir -p build
@@ -81,6 +98,7 @@ cd build
 cmake .. \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="$INSTALL_PREFIX" \
+  -DPYTHON_EXECUTABLE=$(which python3) \
   -DBUILD_EXAMPLES=OFF \
   -DBUILD_TESTING=OFF
 make -j4
