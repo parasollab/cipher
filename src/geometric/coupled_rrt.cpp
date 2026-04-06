@@ -168,6 +168,7 @@ int main(int argc, char** argv)
     std::string configFile;
     double timelimit = 60.0;
     double goal_threshold = 0.5;
+    double goal_bias = 0.05;
     int seed = -1;
 
     po::options_description desc("Allowed options");
@@ -205,6 +206,9 @@ int main(int argc, char** argv)
             }
             if (cfg["timelimit"]) {
                 timelimit = cfg["timelimit"].as<double>();
+            }
+            if (cfg["goal_bias"]) {
+                goal_bias = cfg["goal_bias"].as<double>();
             }
         } catch (const YAML::Exception& e) {
             std::cerr << "ERROR loading config file: " << e.what() << std::endl;
@@ -353,11 +357,13 @@ int main(int argc, char** argv)
 
     // Create and configure the RRT planner
     auto planner = std::make_shared<og::RRT>(compound_si);
+    planner->setGoalBias(goal_bias);
     planner->setProblemDefinition(pdef);
     planner->setup();
 
     std::cout << "Planner configured. Starting search..." << std::endl;
     std::cout << "  Goal threshold: " << goal_threshold << std::endl;
+    std::cout << "  Goal bias: " << goal_bias << std::endl;
     std::cout << "  Total time limit: " << timelimit << " seconds" << std::endl;
 
     // Solve
