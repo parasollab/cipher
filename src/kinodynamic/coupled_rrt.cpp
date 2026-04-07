@@ -2,8 +2,9 @@
 #include <ompl/base/goals/GoalRegion.h>
 #include <ompl/base/spaces/SE2StateSpace.h>
 #include <ompl/base/PlannerTerminationCondition.h>
-#include <ompl/geometric/planners/rrt/RRT.h>
-#include <ompl/geometric/PathGeometric.h>
+#include <ompl/control/planners/rrt/RRT.h>
+#include <ompl/control/PathControl.h>
+#include <ompl/control/StatePropagator.h>
 
 // FCL
 #include <fcl/fcl.h>
@@ -25,7 +26,7 @@
 #include "../../db-CBS/src/robots.h"
 
 namespace ob = ompl::base;
-namespace og = ompl::geometric;
+namespace oc = ompl::control;
 namespace po = boost::program_options;
 
 
@@ -132,10 +133,9 @@ class CompoundGoalCondition : public ob::GoalRegion
 public:
     CompoundGoalCondition(
         const ob::SpaceInformationPtr& si,
-        const ob::CompoundStateSpace* css,
         const std::vector<ob::State*>& goal_states,
         double threshold)
-        : ob::GoalRegion(si), css_(css), goal_states_(goal_states)
+        : ob::GoalRegion(si), goal_states_(goal_states)
     {
         threshold_ = threshold;
     }
@@ -143,9 +143,10 @@ public:
     double distanceGoal(const ob::State* st) const override
     {
         auto compound = st->as<ob::CompoundState>();
+        auto css = si_->getStateSpace()->as<ob::CompoundStateSpace>();
         double max_dist = 0.0;
         for (size_t i = 0; i < goal_states_.size(); ++i) {
-            double dist = css_->getSubspace(i)->distance(
+            double dist = css->getSubspace(i)->distance(
                 compound->components[i], goal_states_[i]);
             if (dist > max_dist) {
                 max_dist = dist;
@@ -155,8 +156,41 @@ public:
     }
 
 private:
-    const ob::CompoundStateSpace* css_;
-    std::vector<ob::State*> goal_states_;  // non-owning; lifetime managed by main
+    std::vector<ob::State*> goal_states_;
+};
+
+
+class CompoundStatePropagator : public oc::StatePropagator
+{
+public:
+    CompoundStatePropagator(
+        const oc::SpaceInformationPtr& si,
+        const std::vector<std::shared_ptr<Robot>>& robots)
+        : oc::StatePropagator(si), robots_(robots) {}
+
+    void propagate(
+        const ob::State* state,
+        const oc::Control* control,
+        double duration,
+        ob::State* result) const override
+    {
+        auto startTyped = state->as<ob::CompoundState>();
+        auto controlTyped = control->as<oc::CompoundControlSpace::ControlType>();
+        auto resultTyped = result->as<ob::CompoundState>();
+        for (size_t i = 0; i < robots_.size(); ++i) {
+            robots_[i]->propagate(
+                startTyped->components[i],
+                controlTyped->components[i],
+                duration,
+                resultTyped->components[i]);
+        }
+    }
+
+    bool canPropagateBackward() const override { return false; }
+    bool canSteer() const override { return false; }
+
+private:
+    std::vector<std::shared_ptr<Robot>> robots_;
 };
 
 
@@ -170,6 +204,9 @@ int main(int argc, char** argv)
     double goal_threshold = 0.5;
     double goal_bias = 0.05;
     int seed = -1;
+    double propagation_step_size = 0.1;
+    int control_duration_min = 1;
+    int control_duration_max = 10;
 
     po::options_description desc("Allowed options");
     desc.add_options()
@@ -209,6 +246,13 @@ int main(int argc, char** argv)
             }
             if (cfg["goal_bias"]) {
                 goal_bias = cfg["goal_bias"].as<double>();
+            }
+            if (cfg["propagation_step_size"]) {
+                propagation_step_size = cfg["propagation_step_size"].as<double>();
+            }
+            if (cfg["control_duration"]) {
+                control_duration_min = cfg["control_duration"][0].as<int>();
+                control_duration_max = cfg["control_duration"][1].as<int>();
             }
         } catch (const YAML::Exception& e) {
             std::cerr << "ERROR loading config file: " << e.what() << std::endl;
@@ -301,11 +345,21 @@ int main(int argc, char** argv)
     const int num_robots = robots.size();
     std::cout << "Planning for " << num_robots << " robots" << std::endl;
 
-    // Create single SpaceInformation over the compound space
-    auto compound_si = std::make_shared<ob::SpaceInformation>(compound_ss);
+    // Build compound control space from each robot's control space
+    auto cspace = std::make_shared<oc::CompoundControlSpace>(compound_ss);
+    for (auto& robot : robots) {
+        cspace->addSubspace(robot->getSpaceInformation()->getControlSpace());
+    }
+
+    // Create kinodynamic SpaceInformation over the compound state+control spaces
+    auto compound_si = std::make_shared<oc::SpaceInformation>(compound_ss, cspace);
     compound_si->setStateValidityChecker(
         std::make_shared<CompoundStateValidityChecker>(
             compound_si, col_mng_environment, robots));
+    compound_si->setStatePropagator(
+        std::make_shared<CompoundStatePropagator>(compound_si, robots));
+    compound_si->setPropagationStepSize(propagation_step_size);
+    compound_si->setMinMaxControlDuration(control_duration_min, control_duration_max);
     compound_si->setup();
 
     // Allocate per-robot start/goal states and fill from YAML
@@ -353,10 +407,10 @@ int main(int argc, char** argv)
     auto pdef = std::make_shared<ob::ProblemDefinition>(compound_si);
     pdef->addStartState(compound_start);
     pdef->setGoal(std::make_shared<CompoundGoalCondition>(
-        compound_si, compound_ss.get(), goal_states, goal_threshold));
+        compound_si, goal_states, goal_threshold));
 
     // Create and configure the RRT planner
-    auto planner = std::make_shared<og::RRT>(compound_si);
+    auto planner = std::make_shared<oc::RRT>(compound_si);
     planner->setGoalBias(goal_bias);
     planner->setProblemDefinition(pdef);
     planner->setup();
@@ -385,7 +439,7 @@ int main(int argc, char** argv)
     if (solved) {
         std::cout << "Extracting solution path..." << std::endl;
 
-        auto path = pdef->getSolutionPath()->as<og::PathGeometric>();
+        auto path = pdef->getSolutionPath()->as<oc::PathControl>();
         path->interpolate();
 
         std::cout << "  Path has " << path->getStateCount() << " states after interpolation" << std::endl;
