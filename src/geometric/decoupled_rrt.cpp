@@ -27,8 +27,8 @@
 #include <boost/program_options.hpp>
 
 // db-CBS robot dynamics
-#include "../../db-CBS/src/robots.h"
-#include "../../db-CBS/src/fclStateValidityChecker.hpp"
+#include "robots.h"
+#include "fclStateValidityChecker.hpp"
 
 namespace ob = ompl::base;
 namespace oc = ompl::control;
