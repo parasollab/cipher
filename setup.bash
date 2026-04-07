@@ -20,75 +20,75 @@ cd "$SCRIPT_DIR"
 INSTALL_PREFIX="${SCRIPT_DIR}/install"
 mkdir -p "$INSTALL_PREFIX"
 
-echo -e "\n${GREEN}Step 1: Building eigenpy${NC}"
-echo "This will be installed to: $INSTALL_PREFIX"
+# echo -e "\n${GREEN}Step 1: Building eigenpy${NC}"
+# echo "This will be installed to: $INSTALL_PREFIX"
 
-# Build and install eigenpy
-cd eigenpy
-mkdir -p build
-cd build
-cmake .. \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
-  -DPYTHON_EXECUTABLE=$(which python3)
-make -j4
-make install
-cd "$SCRIPT_DIR"
+# # Build and install eigenpy
+# cd eigenpy
+# mkdir -p build
+# cd build
+# cmake .. \
+#   -DCMAKE_BUILD_TYPE=Release \
+#   -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
+#   -DPYTHON_EXECUTABLE=$(which python3)
+# make -j4
+# make install
+# cd "$SCRIPT_DIR"
 
-echo -e "\n${GREEN}Step 2: Building pinocchio${NC}"
-echo "Dependencies: eigenpy (already built)"
+# echo -e "\n${GREEN}Step 2: Building pinocchio${NC}"
+# echo "Dependencies: eigenpy (already built)"
 
-# Build and install pinocchio
-cd pinocchio
-mkdir -p build
-cd build
-cmake .. \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
-  -DCMAKE_PREFIX_PATH="$INSTALL_PREFIX" \
-  -DPYTHON_EXECUTABLE=$(which python3) \
-  -DBUILD_PYTHON_INTERFACE=OFF \
-  -DBUILD_TESTING=OFF \
-  -DBUILD_BENCHMARK=OFF
-make -j4
-make install
-cd "$SCRIPT_DIR"
+# # Build and install pinocchio
+# cd pinocchio
+# mkdir -p build
+# cd build
+# cmake .. \
+#   -DCMAKE_BUILD_TYPE=Release \
+#   -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
+#   -DCMAKE_PREFIX_PATH="$INSTALL_PREFIX" \
+#   -DPYTHON_EXECUTABLE=$(which python3) \
+#   -DBUILD_PYTHON_INTERFACE=OFF \
+#   -DBUILD_TESTING=OFF \
+#   -DBUILD_BENCHMARK=OFF
+# make -j4
+# make install
+# cd "$SCRIPT_DIR"
 
-echo -e "\n${GREEN}Step 3: Building crocoddyl${NC}"
-echo "Dependencies: eigenpy, pinocchio (already built)"
+# echo -e "\n${GREEN}Step 3: Building crocoddyl${NC}"
+# echo "Dependencies: eigenpy, pinocchio (already built)"
 
-# Build and install crocoddyl
-cd crocoddyl
-mkdir -p build
-cd build
-cmake .. \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
-  -DCMAKE_PREFIX_PATH="$INSTALL_PREFIX" \
-  -DBUILD_PYTHON_INTERFACE=OFF \
-  -DBUILD_EXAMPLES=OFF \
-  -DBUILD_TESTING=OFF \
-  -DBUILD_BENCHMARK=OFF
-make -j4
-make install
-cd "$SCRIPT_DIR"
+# # Build and install crocoddyl
+# cd crocoddyl
+# mkdir -p build
+# cd build
+# cmake .. \
+#   -DCMAKE_BUILD_TYPE=Release \
+#   -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
+#   -DCMAKE_PREFIX_PATH="$INSTALL_PREFIX" \
+#   -DBUILD_PYTHON_INTERFACE=OFF \
+#   -DBUILD_EXAMPLES=OFF \
+#   -DBUILD_TESTING=OFF \
+#   -DBUILD_BENCHMARK=OFF
+# make -j4
+# make install
+# cd "$SCRIPT_DIR"
 
-echo -e "\n${GREEN}Step 4: Building Multi-Robot-OMPL${NC}"
-echo "Dependencies: Boost (system)"
+# echo -e "\n${GREEN}Step 4: Building Multi-Robot-OMPL${NC}"
+# echo "Dependencies: Boost (system)"
 
-# Build and install Multi-Robot-OMPL (ompl)
-cd Multi-Robot-OMPL
-mkdir -p build
-cd build
-cmake .. \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
-  -DCMAKE_PREFIX_PATH="$INSTALL_PREFIX" \
-  -DOMPL_REGISTRATION=OFF \
-  -DPYTHON_BINDINGS=OFF
-make -j4
-make install
-cd "$SCRIPT_DIR"
+# # Build and install Multi-Robot-OMPL (ompl)
+# cd Multi-Robot-OMPL
+# mkdir -p build
+# cd build
+# cmake .. \
+#   -DCMAKE_BUILD_TYPE=Release \
+#   -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
+#   -DCMAKE_PREFIX_PATH="$INSTALL_PREFIX" \
+#   -DOMPL_REGISTRATION=OFF \
+#   -DPYTHON_BINDINGS=OFF
+# make -j4
+# make install
+# cd "$SCRIPT_DIR"
 
 echo -e "\n${GREEN}Step 5: Building main project${NC}"
 
