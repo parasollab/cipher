@@ -1,4 +1,5 @@
 # Configuration file for coupled_rrt planner
 
-goal_threshold: 10.0 # Distance threshold to consider goal reached
+goal_threshold: 5.0 # Distance threshold to consider goal reached
 goal_bias: 0.1 # Probability of sampling the goal during RRT expansion
+timelimit: 300.0

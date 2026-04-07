@@ -85,6 +85,26 @@ target_include_directories(kinodynamic_decoupled_rrt PRIVATE
 )
 target_link_libraries(kinodynamic_decoupled_rrt PRIVATE ompl Eigen3::Eigen Boost::headers)
 
+add_executable(kinodynamic_coupled_rrt
+  src/kinodynamic/coupled_rrt.cpp
+  db-CBS/src/robots.cpp
+)
+target_include_directories(kinodynamic_coupled_rrt PRIVATE
+  ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_SOURCE_DIR}/db-CBS/src
+  ${YAML_INCLUDE_DIRS}
+  ${FCL_INCLUDE_DIRS}
+)
+target_link_directories(kinodynamic_coupled_rrt PRIVATE ${YAML_LIBRARY_DIRS})
+target_link_libraries(kinodynamic_coupled_rrt PRIVATE
+  ompl
+  Eigen3::Eigen
+  Boost::program_options
+  ${YAML_LIBRARIES}
+  ${FCL_LIBRARIES}
+)
+
 enable_testing()
 
 add_executable(test_grid_decomposition
