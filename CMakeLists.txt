@@ -96,6 +96,26 @@ target_link_libraries(srrt PRIVATE
   ${FCL_LIBRARIES}
 )
 
+add_executable(drrt
+  src/geometric/drrt.cpp
+  db-CBS/src/robots.cpp
+)
+target_include_directories(drrt PRIVATE
+  ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_SOURCE_DIR}/db-CBS/src
+  ${YAML_INCLUDE_DIRS}
+  ${FCL_INCLUDE_DIRS}
+)
+target_link_directories(drrt PRIVATE ${YAML_LIBRARY_DIRS})
+target_link_libraries(drrt PRIVATE
+  ompl
+  Eigen3::Eigen
+  Boost::program_options
+  ${YAML_LIBRARIES}
+  ${FCL_LIBRARIES}
+)
+
 add_executable(kinodynamic_decoupled_rrt
   src/kinodynamic/decoupled_rrt.cpp
   db-CBS/src/robots.cpp

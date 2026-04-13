@@ -1,0 +1,20 @@
+# Discrete-RRT Configuration Parameters
+
+# Time (in seconds) to spend building each robot's roadmap
+roadmap_time: 0.5
+
+# Number of tree expansion steps per iteration
+expansions_per_iter: 5
+
+# SPARStwo parameters (optional)
+# Maximum consecutive failures before termination
+spars_max_failures: 5000
+
+# Sparse graph visibility range (fraction of max extent)
+spars_sparse_delta_fraction: 0.25
+
+# Dense graph interface support range (fraction of max extent)
+spars_dense_delta_fraction: 0.001
+
+# Stretch factor for path quality (1.1 - 3.0)
+spars_stretch_factor: 3.0
