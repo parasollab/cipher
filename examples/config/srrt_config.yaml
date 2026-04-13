@@ -1,0 +1,10 @@
+# sRRT Planner Configuration
+
+# Maximum distance for extending the tree in one step
+max_distance: 5.0
+
+# Goal threshold - distance within which a robot is considered at goal
+goal_threshold: 2.0
+
+# Time limit for building each individual policy tree (seconds)
+policy_timeout: 5.0
