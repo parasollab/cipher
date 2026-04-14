@@ -165,10 +165,10 @@ public:
                             ++skipped;
                             continue;
                         }
-                        else {
-                            // Add state to tree and update coverage map
-                            coverage_map[region_idx]++;
-                        }
+                        // else {
+                        //     // Add state to tree and update coverage map
+                        //     coverage_map[region_idx]++;
+                        // }
 
                         motion->parent = nmotion;
                         motion->step = nmotion->step + 1;
@@ -180,10 +180,13 @@ public:
                     if (skipped > 0)
                         std::cout << "[GuidedGeoRRT] skipped " << skipped
                                   << " intermediate states (wrong region)" << std::endl;
+                    else {
+                        coverage_map[region_idx] += 1;
 
-                    for (std::size_t i = 0; i < extension.size(); ++i)
-                    {
-                        nn_->add(extension[i]);
+                        for (std::size_t i = 0; i < extension.size(); ++i)
+                        {
+                            nn_->add(extension[i]);
+                        }
                     }
                 }
                 else
