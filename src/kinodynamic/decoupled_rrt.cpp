@@ -120,7 +120,10 @@ private:
 
 ob::PlannerPtr plannerAllocator(const ob::SpaceInformationPtr& si)
 {
-    return std::make_shared<oc::RRT>(std::static_pointer_cast<oc::SpaceInformation>(si));
+    auto planner = std::make_shared<oc::RRT>(std::static_pointer_cast<oc::SpaceInformation>(si));
+    planner->setIntermediateStates(true);
+    return planner;
+    // return std::make_shared<oc::RRT>(std::static_pointer_cast<oc::SpaceInformation>(si));
 }
 
 
