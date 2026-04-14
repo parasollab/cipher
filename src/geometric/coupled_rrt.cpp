@@ -1,18 +1,13 @@
 // OMPL base headers
-#include <ompl/base/goals/GoalRegion.h>
 #include <ompl/base/spaces/SE2StateSpace.h>
+#include <ompl/base/spaces/RealVectorStateSpace.h>
 #include <ompl/base/PlannerTerminationCondition.h>
 #include <ompl/geometric/planners/rrt/RRT.h>
 #include <ompl/geometric/PathGeometric.h>
 
-// FCL
-#include <fcl/fcl.h>
-
 // Standard library
 #include <iostream>
 #include <fstream>
-#include <vector>
-#include <memory>
 #include <chrono>
 
 // YAML
@@ -21,144 +16,159 @@
 // Boost
 #include <boost/program_options.hpp>
 
-// db-CBS robot dynamics
-#include "../../db-CBS/src/robots.h"
+#include "coupled_rrt.h"
 
-namespace ob = ompl::base;
 namespace og = ompl::geometric;
 namespace po = boost::program_options;
 
 
-class CompoundStateValidityChecker : public ob::StateValidityChecker
+// ── CompoundStateValidityChecker ─────────────────────────────────────────────
+
+CompoundStateValidityChecker::CompoundStateValidityChecker(
+    const ob::SpaceInformationPtr& si,
+    const std::shared_ptr<fcl::BroadPhaseCollisionManagerf>& col_mng_environment,
+    const std::vector<std::shared_ptr<Robot>>& robots)
+    : ob::StateValidityChecker(si),
+      col_mng_environment_(col_mng_environment),
+      robots_(robots) {}
+
+bool CompoundStateValidityChecker::isValid(const ob::State* state) const
 {
-public:
-    CompoundStateValidityChecker(
-        const ob::SpaceInformationPtr& si,
-        const std::shared_ptr<fcl::BroadPhaseCollisionManagerf>& col_mng_environment,
-        const std::vector<std::shared_ptr<Robot>>& robots)
-        : ob::StateValidityChecker(si),
-          col_mng_environment_(col_mng_environment),
-          robots_(robots) {}
-
-    bool isValid(const ob::State* state) const override
-    {
-        // Check bounds
-        if (!si_->satisfiesBounds(state)) {
-            return false;
-        }
-
-        auto compound = state->as<ob::CompoundState>();
-
-        // Check each robot against obstacles
-        for (size_t i = 0; i < robots_.size(); ++i) {
-            for (size_t part = 0; part < robots_[i]->numParts(); ++part) {
-                const auto& transform = robots_[i]->getTransform(
-                    compound->components[i], part);
-
-                fcl::CollisionObjectf robot_co(robots_[i]->getCollisionGeometry(part));
-                robot_co.setTranslation(transform.translation());
-                robot_co.setRotation(transform.rotation());
-                robot_co.computeAABB();
-
-                fcl::DefaultCollisionData<float> collision_data;
-                col_mng_environment_->collide(&robot_co, &collision_data,
-                    fcl::DefaultCollisionFunction<float>);
-
-                if (collision_data.result.isCollision()) {
-                    return false;
-                }
-            }
-        }
-
-        // Check robot-robot collisions
-        for (size_t i = 0; i < robots_.size(); ++i) {
-            for (size_t j = i + 1; j < robots_.size(); ++j) {
-                if (checkRobotRobotCollision(
-                    compound->components[i],
-                    compound->components[j],
-                    robots_[i],
-                    robots_[j])) {
-                    return false;
-                }
-            }
-        }
-
-        return true;
-    }
-
-private:
-    bool checkRobotRobotCollision(
-        const ob::State* state_i,
-        const ob::State* state_j,
-        const std::shared_ptr<Robot>& robot_i,
-        const std::shared_ptr<Robot>& robot_j) const
-    {
-        for (size_t part_i = 0; part_i < robot_i->numParts(); ++part_i) {
-            for (size_t part_j = 0; part_j < robot_j->numParts(); ++part_j) {
-                const auto& transform_i = robot_i->getTransform(state_i, part_i);
-                const auto& transform_j = robot_j->getTransform(state_j, part_j);
-
-                fcl::CollisionObjectf co_i(robot_i->getCollisionGeometry(part_i));
-                co_i.setTranslation(transform_i.translation());
-                co_i.setRotation(transform_i.rotation());
-                co_i.computeAABB();
-
-                fcl::CollisionObjectf co_j(robot_j->getCollisionGeometry(part_j));
-                co_j.setTranslation(transform_j.translation());
-                co_j.setRotation(transform_j.rotation());
-                co_j.computeAABB();
-
-                fcl::CollisionRequestf request;
-                fcl::CollisionResultf result;
-                fcl::collide(&co_i, &co_j, request, result);
-
-                if (result.isCollision()) {
-                    return true;
-                }
-            }
-        }
+    // Check bounds
+    if (!si_->satisfiesBounds(state)) {
         return false;
     }
 
-    std::shared_ptr<fcl::BroadPhaseCollisionManagerf> col_mng_environment_;
-    std::vector<std::shared_ptr<Robot>> robots_;
-};
+    auto compound = state->as<ob::CompoundState>();
 
+    // Check each robot against obstacles
+    for (size_t i = 0; i < robots_.size(); ++i) {
+        for (size_t part = 0; part < robots_[i]->numParts(); ++part) {
+            const auto& transform = robots_[i]->getTransform(
+                compound->components[i], part);
 
-// Goal condition that is satisfied when all robots are within threshold of their
-// respective goals (measured as max per-robot distance in the composite space).
-class CompoundGoalCondition : public ob::GoalRegion
-{
-public:
-    CompoundGoalCondition(
-        const ob::SpaceInformationPtr& si,
-        const ob::CompoundStateSpace* css,
-        const std::vector<ob::State*>& goal_states,
-        double threshold)
-        : ob::GoalRegion(si), css_(css), goal_states_(goal_states)
-    {
-        threshold_ = threshold;
-    }
+            fcl::CollisionObjectf robot_co(robots_[i]->getCollisionGeometry(part));
+            robot_co.setTranslation(transform.translation());
+            robot_co.setRotation(transform.rotation());
+            robot_co.computeAABB();
 
-    double distanceGoal(const ob::State* st) const override
-    {
-        auto compound = st->as<ob::CompoundState>();
-        double max_dist = 0.0;
-        for (size_t i = 0; i < goal_states_.size(); ++i) {
-            double dist = css_->getSubspace(i)->distance(
-                compound->components[i], goal_states_[i]);
-            if (dist > max_dist) {
-                max_dist = dist;
+            fcl::DefaultCollisionData<float> collision_data;
+            col_mng_environment_->collide(&robot_co, &collision_data,
+                fcl::DefaultCollisionFunction<float>);
+
+            if (collision_data.result.isCollision()) {
+                return false;
             }
         }
-        return max_dist;
     }
 
-private:
-    const ob::CompoundStateSpace* css_;
-    std::vector<ob::State*> goal_states_;  // non-owning; lifetime managed by main
-};
+    // Check robot-robot collisions
+    for (size_t i = 0; i < robots_.size(); ++i) {
+        for (size_t j = i + 1; j < robots_.size(); ++j) {
+            if (checkRobotRobotCollision(
+                compound->components[i],
+                compound->components[j],
+                robots_[i],
+                robots_[j])) {
+                return false;
+            }
+        }
+    }
 
+    return true;
+}
+
+bool CompoundStateValidityChecker::checkRobotRobotCollision(
+    const ob::State* state_i,
+    const ob::State* state_j,
+    const std::shared_ptr<Robot>& robot_i,
+    const std::shared_ptr<Robot>& robot_j) const
+{
+    for (size_t part_i = 0; part_i < robot_i->numParts(); ++part_i) {
+        for (size_t part_j = 0; part_j < robot_j->numParts(); ++part_j) {
+            const auto& transform_i = robot_i->getTransform(state_i, part_i);
+            const auto& transform_j = robot_j->getTransform(state_j, part_j);
+
+            fcl::CollisionObjectf co_i(robot_i->getCollisionGeometry(part_i));
+            co_i.setTranslation(transform_i.translation());
+            co_i.setRotation(transform_i.rotation());
+            co_i.computeAABB();
+
+            fcl::CollisionObjectf co_j(robot_j->getCollisionGeometry(part_j));
+            co_j.setTranslation(transform_j.translation());
+            co_j.setRotation(transform_j.rotation());
+            co_j.computeAABB();
+
+            fcl::CollisionRequestf request;
+            fcl::CollisionResultf result;
+            fcl::collide(&co_i, &co_j, request, result);
+
+            if (result.isCollision()) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+
+// ── CompoundGoalCondition ─────────────────────────────────────────────────────
+
+CompoundGoalCondition::CompoundGoalCondition(
+    const ob::SpaceInformationPtr& si,
+    const ob::CompoundStateSpace* css,
+    const std::vector<ob::State*>& goal_states,
+    double threshold)
+    : ob::GoalRegion(si), css_(css), goal_states_(goal_states)
+{
+    threshold_ = threshold;
+}
+
+double CompoundGoalCondition::distanceGoal(const ob::State* st) const
+{
+    auto compound = st->as<ob::CompoundState>();
+    double max_dist = 0.0;
+    for (size_t i = 0; i < goal_states_.size(); ++i) {
+        double dist = css_->getSubspace(i)->distance(
+            compound->components[i], goal_states_[i]);
+        if (dist > max_dist) {
+            max_dist = dist;
+        }
+    }
+    return max_dist;
+}
+
+
+// ── Configuration loading ─────────────────────────────────────────────────────
+
+CoupledRRTConfig loadConfigFromYAML(const std::string& configFile)
+{
+    CoupledRRTConfig config;
+
+    try {
+        YAML::Node cfg = YAML::LoadFile(configFile);
+        if (cfg["timelimit"]) {
+            config.time_limit = cfg["timelimit"].as<double>();
+        }
+        if (cfg["goal_threshold"]) {
+            config.goal_threshold = cfg["goal_threshold"].as<double>();
+        }
+        if (cfg["seed"]) {
+            config.seed = cfg["seed"].as<int>();
+        }
+        if (cfg["goal_bias"]) {
+            config.goal_bias = cfg["goal_bias"].as<double>();
+        }
+    } catch (const YAML::Exception& e) {
+        std::cerr << "ERROR loading config file: " << e.what() << std::endl;
+        throw;
+    }
+
+    return config;
+}
+
+
+// ── main ──────────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv)
 {
@@ -166,10 +176,7 @@ int main(int argc, char** argv)
     std::string inputFile;
     std::string outputFile;
     std::string configFile;
-    double timelimit = 60.0;
-    double goal_threshold = 0.5;
-    double goal_bias = 0.05;
-    int seed = -1;
+    CoupledRRTConfig config;
 
     po::options_description desc("Allowed options");
     desc.add_options()
@@ -197,29 +204,16 @@ int main(int argc, char** argv)
     // Load configuration file if provided
     if (vm.count("cfg")) {
         try {
-            YAML::Node cfg = YAML::LoadFile(configFile);
-            if (cfg["goal_threshold"]) {
-                goal_threshold = cfg["goal_threshold"].as<double>();
-            }
-            if (cfg["seed"]) {
-                seed = cfg["seed"].as<int>();
-            }
-            if (cfg["timelimit"]) {
-                timelimit = cfg["timelimit"].as<double>();
-            }
-            if (cfg["goal_bias"]) {
-                goal_bias = cfg["goal_bias"].as<double>();
-            }
-        } catch (const YAML::Exception& e) {
-            std::cerr << "ERROR loading config file: " << e.what() << std::endl;
+            config = loadConfigFromYAML(configFile);
+        } catch (const YAML::Exception&) {
             return 1;
         }
     }
 
     // Set the random seed
-    if (seed >= 0) {
-        std::cout << "Setting random seed to: " << seed << std::endl;
-        ompl::RNG::setSeed(seed);
+    if (config.seed >= 0) {
+        std::cout << "Setting random seed to: " << config.seed << std::endl;
+        ompl::RNG::setSeed(config.seed);
     } else {
         std::cout << "Using random seed" << std::endl;
     }
@@ -314,27 +308,26 @@ int main(int argc, char** argv)
     robot_idx = 0;
 
     for (const auto& robot_node : env["robots"]) {
-        auto& ss = robot_spaces[robot_idx];
+        auto robot_si = robots[robot_idx]->getSpaceInformation();
 
+        // Parse start/goal generically via copyFromReals so any state space is supported
         const auto& start_vec = robot_node["start"];
-        auto start_state = ss->allocState();
-        auto start_se2 = start_state->as<ob::SE2StateSpace::StateType>();
-        start_se2->setX(start_vec[0].as<double>());
-        start_se2->setY(start_vec[1].as<double>());
-        start_se2->setYaw(start_vec.size() > 2 ? start_vec[2].as<double>() : 0.0);
+        std::vector<double> start_reals;
+        for (const auto& v : start_vec) start_reals.push_back(v.as<double>());
+        auto* start_state = robot_si->getStateSpace()->allocState();
+        robot_si->getStateSpace()->copyFromReals(start_state, start_reals);
         start_states.push_back(start_state);
 
         const auto& goal_vec = robot_node["goal"];
-        auto goal_state = ss->allocState();
-        auto goal_se2 = goal_state->as<ob::SE2StateSpace::StateType>();
-        goal_se2->setX(goal_vec[0].as<double>());
-        goal_se2->setY(goal_vec[1].as<double>());
-        goal_se2->setYaw(goal_vec.size() > 2 ? goal_vec[2].as<double>() : 0.0);
+        std::vector<double> goal_reals;
+        for (const auto& v : goal_vec) goal_reals.push_back(v.as<double>());
+        auto* goal_state = robot_si->getStateSpace()->allocState();
+        robot_si->getStateSpace()->copyFromReals(goal_state, goal_reals);
         goal_states.push_back(goal_state);
 
         std::cout << "  Robot " << robot_idx
-                  << "  Start: (" << start_se2->getX() << ", " << start_se2->getY() << ")"
-                  << "  Goal: ("  << goal_se2->getX()  << ", " << goal_se2->getY()  << ")"
+                  << "  Start: (" << start_reals[0] << ", " << start_reals[1] << ")"
+                  << "  Goal: ("  << goal_reals[0]  << ", " << goal_reals[1]  << ")"
                   << std::endl;
 
         robot_idx++;
@@ -353,22 +346,22 @@ int main(int argc, char** argv)
     auto pdef = std::make_shared<ob::ProblemDefinition>(compound_si);
     pdef->addStartState(compound_start);
     pdef->setGoal(std::make_shared<CompoundGoalCondition>(
-        compound_si, compound_ss.get(), goal_states, goal_threshold));
+        compound_si, compound_ss.get(), goal_states, config.goal_threshold));
 
     // Create and configure the RRT planner
     auto planner = std::make_shared<og::RRT>(compound_si);
-    planner->setGoalBias(goal_bias);
+    planner->setGoalBias(config.goal_bias);
     planner->setProblemDefinition(pdef);
     planner->setup();
 
     std::cout << "Planner configured. Starting search..." << std::endl;
-    std::cout << "  Goal threshold: " << goal_threshold << std::endl;
-    std::cout << "  Goal bias: " << goal_bias << std::endl;
-    std::cout << "  Total time limit: " << timelimit << " seconds" << std::endl;
+    std::cout << "  Goal threshold: " << config.goal_threshold << std::endl;
+    std::cout << "  Goal bias: " << config.goal_bias << std::endl;
+    std::cout << "  Total time limit: " << config.time_limit << " seconds" << std::endl;
 
     // Solve
     auto start_time = std::chrono::steady_clock::now();
-    ob::PlannerStatus status = planner->solve(ob::timedPlannerTerminationCondition(timelimit));
+    ob::PlannerStatus status = planner->solve(ob::timedPlannerTerminationCondition(config.time_limit));
     auto end_time = std::chrono::steady_clock::now();
     double planning_time = std::chrono::duration<double>(end_time - start_time).count();
 

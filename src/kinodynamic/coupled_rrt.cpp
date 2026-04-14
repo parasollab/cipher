@@ -31,6 +31,15 @@ namespace ob = ompl::base;
 namespace oc = ompl::control;
 namespace po = boost::program_options;
 
+struct KinoCoupledRRTConfig {
+    double time_limit = 60.0;
+    double goal_threshold = 1.5;
+    double goal_bias = 0.05;
+    int seed = -1;  // Random seed (-1 for random)
+    double propagation_step_size = 0.1;
+    int control_duration_min = 1;
+    int control_duration_max = 10;
+};
 
 class CompoundStateValidityChecker : public ob::StateValidityChecker
 {
@@ -195,6 +204,40 @@ private:
     std::vector<std::shared_ptr<Robot>> robots_;
 };
 
+KinoCoupledRRTConfig loadConfigFromYAML(const std::string& configFile)
+{
+    KinoCoupledRRTConfig config;
+
+    try {
+        YAML::Node cfg = YAML::LoadFile(configFile);
+        if (cfg["time_limit"]) {
+            config.time_limit = cfg["time_limit"].as<double>();
+        }
+        if (cfg["goal_threshold"]) {
+            config.goal_threshold = cfg["goal_threshold"].as<double>();
+        }
+        if (cfg["propagation_step_size"]) {
+            config.propagation_step_size = cfg["propagation_step_size"].as<double>();
+        }
+        if (cfg["control_duration_min"]) {
+            config.control_duration_min = cfg["control_duration_min"].as<int>();
+        }
+        if (cfg["control_duration_max"]) {
+            config.control_duration_max = cfg["control_duration_max"].as<int>();
+        }
+        if (cfg["seed"]) {
+            config.seed = cfg["seed"].as<int>();
+        }
+        if (cfg["goal_bias"]) {
+            config.goal_bias = cfg["goal_bias"].as<double>();
+        }
+    } catch (const YAML::Exception& e) {
+        std::cerr << "ERROR loading config file: " << e.what() << std::endl;
+        throw;
+    }
+
+    return config;
+}
 
 int main(int argc, char** argv)
 {
@@ -202,13 +245,14 @@ int main(int argc, char** argv)
     std::string inputFile;
     std::string outputFile;
     std::string configFile;
-    double timelimit = 60.0;
-    double goal_threshold = 0.5;
-    double goal_bias = 0.05;
-    int seed = -1;
-    double propagation_step_size = 0.1;
-    int control_duration_min = 1;
-    int control_duration_max = 10;
+    KinoCoupledRRTConfig config;
+    // double time_limit = 60.0;
+    // double goal_threshold = 0.5;
+    // double goal_bias = 0.05;
+    // int seed = -1;
+    // double propagation_step_size = 0.1;
+    // int control_duration_min = 1;
+    // int control_duration_max = 10;
 
     po::options_description desc("Allowed options");
     desc.add_options()
@@ -236,26 +280,27 @@ int main(int argc, char** argv)
     // Load configuration file if provided
     if (vm.count("cfg")) {
         try {
-            YAML::Node cfg = YAML::LoadFile(configFile);
-            if (cfg["goal_threshold"]) {
-                goal_threshold = cfg["goal_threshold"].as<double>();
-            }
-            if (cfg["seed"]) {
-                seed = cfg["seed"].as<int>();
-            }
-            if (cfg["timelimit"]) {
-                timelimit = cfg["timelimit"].as<double>();
-            }
-            if (cfg["goal_bias"]) {
-                goal_bias = cfg["goal_bias"].as<double>();
-            }
-            if (cfg["propagation_step_size"]) {
-                propagation_step_size = cfg["propagation_step_size"].as<double>();
-            }
-            if (cfg["control_duration"]) {
-                control_duration_min = cfg["control_duration"][0].as<int>();
-                control_duration_max = cfg["control_duration"][1].as<int>();
-            }
+            config = loadConfigFromYAML(configFile);
+            // YAML::Node cfg = YAML::LoadFile(configFile);
+            // if (cfg["goal_threshold"]) {
+            //     goal_threshold = cfg["goal_threshold"].as<double>();
+            // }
+            // if (cfg["seed"]) {
+            //     seed = cfg["seed"].as<int>();
+            // }
+            // if (cfg["time_limit"]) {
+            //     time_limit = cfg["time_limit"].as<double>();
+            // }
+            // if (cfg["goal_bias"]) {
+            //     goal_bias = cfg["goal_bias"].as<double>();
+            // }
+            // if (cfg["propagation_step_size"]) {
+            //     propagation_step_size = cfg["propagation_step_size"].as<double>();
+            // }
+            // if (cfg["control_duration"]) {
+            //     control_duration_min = cfg["control_duration"][0].as<int>();
+            //     control_duration_max = cfg["control_duration"][1].as<int>();
+            // }
         } catch (const YAML::Exception& e) {
             std::cerr << "ERROR loading config file: " << e.what() << std::endl;
             return 1;
@@ -263,9 +308,9 @@ int main(int argc, char** argv)
     }
 
     // Set the random seed
-    if (seed >= 0) {
-        std::cout << "Setting random seed to: " << seed << std::endl;
-        ompl::RNG::setSeed(seed);
+    if (config.seed >= 0) {
+        std::cout << "Setting random seed to: " << config.seed << std::endl;
+        ompl::RNG::setSeed(config.seed);
     } else {
         std::cout << "Using random seed" << std::endl;
     }
@@ -360,8 +405,8 @@ int main(int argc, char** argv)
             compound_si, col_mng_environment, robots));
     compound_si->setStatePropagator(
         std::make_shared<CompoundStatePropagator>(compound_si, robots));
-    compound_si->setPropagationStepSize(propagation_step_size);
-    compound_si->setMinMaxControlDuration(control_duration_min, control_duration_max);
+    compound_si->setPropagationStepSize(config.propagation_step_size);
+    compound_si->setMinMaxControlDuration(config.control_duration_min, config.control_duration_max);
     compound_si->setup();
 
     // Allocate per-robot start/goal states and fill from YAML
@@ -370,27 +415,48 @@ int main(int argc, char** argv)
     robot_idx = 0;
 
     for (const auto& robot_node : env["robots"]) {
-        auto& ss = robot_spaces[robot_idx];
+        // auto& ss = robot_spaces[robot_idx];
+        auto robot_si = robots[robot_idx]->getSpaceInformation();
 
+        // const auto& start_vec = robot_node["start"];
+        // auto start_state = ss->allocState();
+        // auto start_se2 = start_state->as<ob::SE2StateSpace::StateType>();
+        // start_se2->setX(start_vec[0].as<double>());
+        // start_se2->setY(start_vec[1].as<double>());
+        // start_se2->setYaw(start_vec.size() > 2 ? start_vec[2].as<double>() : 0.0);
+        // start_states.push_back(start_state);
+
+        // const auto& goal_vec = robot_node["goal"];
+        // auto goal_state = ss->allocState();
+        // auto goal_se2 = goal_state->as<ob::SE2StateSpace::StateType>();
+        // goal_se2->setX(goal_vec[0].as<double>());
+        // goal_se2->setY(goal_vec[1].as<double>());
+        // goal_se2->setYaw(goal_vec.size() > 2 ? goal_vec[2].as<double>() : 0.0);
+        // goal_states.push_back(goal_state);
+
+        // std::cout << "  Robot " << robot_idx
+        //           << "  Start: (" << start_se2->getX() << ", " << start_se2->getY() << ")"
+        //           << "  Goal: ("  << goal_se2->getX()  << ", " << goal_se2->getY()  << ")"
+        //           << std::endl;
+
+        // Parse start/goal generically via copyFromReals so any state space is supported
         const auto& start_vec = robot_node["start"];
-        auto start_state = ss->allocState();
-        auto start_se2 = start_state->as<ob::SE2StateSpace::StateType>();
-        start_se2->setX(start_vec[0].as<double>());
-        start_se2->setY(start_vec[1].as<double>());
-        start_se2->setYaw(start_vec.size() > 2 ? start_vec[2].as<double>() : 0.0);
+        std::vector<double> start_reals;
+        for (const auto& v : start_vec) start_reals.push_back(v.as<double>());
+        auto* start_state = robot_si->getStateSpace()->allocState();
+        robot_si->getStateSpace()->copyFromReals(start_state, start_reals);
         start_states.push_back(start_state);
 
         const auto& goal_vec = robot_node["goal"];
-        auto goal_state = ss->allocState();
-        auto goal_se2 = goal_state->as<ob::SE2StateSpace::StateType>();
-        goal_se2->setX(goal_vec[0].as<double>());
-        goal_se2->setY(goal_vec[1].as<double>());
-        goal_se2->setYaw(goal_vec.size() > 2 ? goal_vec[2].as<double>() : 0.0);
+        std::vector<double> goal_reals;
+        for (const auto& v : goal_vec) goal_reals.push_back(v.as<double>());
+        auto* goal_state = robot_si->getStateSpace()->allocState();
+        robot_si->getStateSpace()->copyFromReals(goal_state, goal_reals);
         goal_states.push_back(goal_state);
 
         std::cout << "  Robot " << robot_idx
-                  << "  Start: (" << start_se2->getX() << ", " << start_se2->getY() << ")"
-                  << "  Goal: ("  << goal_se2->getX()  << ", " << goal_se2->getY()  << ")"
+                  << "  Start: (" << start_reals[0] << ", " << start_reals[1] << ")"
+                  << "  Goal: ("  << goal_reals[0]  << ", " << goal_reals[1]  << ")"
                   << std::endl;
 
         robot_idx++;
@@ -409,22 +475,22 @@ int main(int argc, char** argv)
     auto pdef = std::make_shared<ob::ProblemDefinition>(compound_si);
     pdef->addStartState(compound_start);
     pdef->setGoal(std::make_shared<CompoundGoalCondition>(
-        compound_si, goal_states, goal_threshold));
+        compound_si, goal_states, config.goal_threshold));
 
     // Create and configure the RRT planner
     auto planner = std::make_shared<oc::RRT>(compound_si);
-    planner->setGoalBias(goal_bias);
+    planner->setGoalBias(config.goal_bias);
     planner->setProblemDefinition(pdef);
     planner->setup();
 
     std::cout << "Planner configured. Starting search..." << std::endl;
-    std::cout << "  Goal threshold: " << goal_threshold << std::endl;
-    std::cout << "  Goal bias: " << goal_bias << std::endl;
-    std::cout << "  Total time limit: " << timelimit << " seconds" << std::endl;
+    std::cout << "  Goal threshold: " << config.goal_threshold << std::endl;
+    std::cout << "  Goal bias: " << config.goal_bias << std::endl;
+    std::cout << "  Total time limit: " << config.time_limit << " seconds" << std::endl;
 
     // Solve
     auto start_time = std::chrono::steady_clock::now();
-    ob::PlannerStatus status = planner->solve(ob::timedPlannerTerminationCondition(timelimit));
+    ob::PlannerStatus status = planner->solve(ob::timedPlannerTerminationCondition(config.time_limit));
     auto end_time = std::chrono::steady_clock::now();
     double planning_time = std::chrono::duration<double>(end_time - start_time).count();
 
