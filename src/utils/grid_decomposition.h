@@ -2,6 +2,7 @@
 #define GRID_DECOMPOSITION_IMPL_H
 
 #include "decomposition.h"
+#include <ompl/base/StateSpace.h>
 #include <ompl/control/planners/syclop/GridDecomposition.h>
 #include <unordered_map>
 #include <vector>
@@ -33,6 +34,11 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
 
     void Decompose(int rid) override;
 
+    // Set the robot state space so that project/sampleFullState work with any
+    // state type (SE2, RealVector, etc.) via copyToReals/copyFromReals.
+    // When not set, falls back to the original SE2 hard-cast behaviour.
+    void setStateSpace(const ompl::base::StateSpacePtr& space) { state_space_ = space; }
+
     // Returns the child region IDs produced by Decompose(rid).
     const std::vector<int>& getChildRegions(int rid) const {
         return children_.at(rid);
@@ -53,6 +59,7 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
     int nextVirtualId_;
     std::unordered_map<int, std::vector<int>> children_;
     std::unordered_map<int, std::shared_ptr<ompl::base::RealVectorBounds>> virtualBounds_;
+    ompl::base::StateSpacePtr state_space_;  // optional; enables generic project/sampleFullState
 };
 
 #endif // GRID_DECOMPOSITION_IMPL_H

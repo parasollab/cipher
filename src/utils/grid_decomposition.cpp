@@ -34,6 +34,18 @@ GridDecompositionImpl::GridDecompositionImpl(const int dim, const ompl::base::Re
 
 void GridDecompositionImpl::project(const ompl::base::State* s, std::vector<double>& coord) const
 {
+    if (state_space_)
+    {
+        // Generic path: first two reals are always x, y for supported state spaces
+        std::vector<double> reals;
+        state_space_->copyToReals(reals, s);
+        coord.resize(dimension_);
+        for (int i = 0; i < dimension_; ++i)
+            coord[i] = reals[i];
+        return;
+    }
+
+    // Legacy SE2 / SE3 path
     if (dimension_ == 2)
     {
         coord.resize(2);
@@ -52,6 +64,18 @@ void GridDecompositionImpl::project(const ompl::base::State* s, std::vector<doub
 void GridDecompositionImpl::sampleFullState(const ompl::base::StateSamplerPtr& sampler, const std::vector<double>& coord, ompl::base::State* s) const
 {
     sampler->sampleUniform(s);
+    if (state_space_)
+    {
+        // Generic path: override the first `dimension_` reals (x, y, ...) in the state
+        std::vector<double> reals;
+        state_space_->copyToReals(reals, s);
+        for (int i = 0; i < dimension_; ++i)
+            reals[i] = coord[i];
+        state_space_->copyFromReals(s, reals);
+        return;
+    }
+
+    // Legacy SE2 / SE3 path
     if (dimension_ == 2)
     {
         s->as<ompl::base::SE2StateSpace::StateType>()->setXY(coord[0], coord[1]);
