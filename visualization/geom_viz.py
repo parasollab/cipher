@@ -2,10 +2,11 @@
 Geometric planner output visualizer.
 
 Visualizes environments and paths produced by geometric planners (e.g. decoupled_rrt).
-Takes a separate environment YAML and planner output YAML.
+Takes a separate environment YAML and an optional planner output YAML.
 
 Usage:
-    python geom_viz.py env.yaml output.yaml
+    python geom_viz.py env.yaml                        # show environment only
+    python geom_viz.py env.yaml output.yaml            # show environment + paths + animation
     python geom_viz.py env.yaml output.yaml --anim-speed 2.0
 """
 
@@ -14,6 +15,7 @@ import sys
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.colors as mcolors
 import numpy as np
 import yaml
 
@@ -60,7 +62,7 @@ _DEFAULT_GEOM = {'shape': 'sphere', 'radius': 0.2}
 # ---------------------------------------------------------------------------
 
 class GeomVisualizer:
-    def __init__(self, env_path, output_path, anim_speed=1.0):
+    def __init__(self, env_path, output_path=None, anim_speed=1.0):
         self.anim_speed = anim_speed
         self._advance_flag = False
 
@@ -74,24 +76,28 @@ class GeomVisualizer:
         self.obstacles = env.get('obstacles', []) or []
         self.robots_cfg = env_data.get('robots', [])
 
-        # Load planner output
-        with open(output_path) as f:
-            out_data = yaml.safe_load(f)
+        # Load planner output (optional)
+        if output_path is not None:
+            with open(output_path) as f:
+                out_data = yaml.safe_load(f)
 
-        if not out_data.get('solved', False):
-            print('ERROR: planner output indicates problem was not solved.', file=sys.stderr)
-            sys.exit(1)
+            if not out_data.get('solved', False):
+                print('ERROR: planner output indicates problem was not solved.', file=sys.stderr)
+                sys.exit(1)
 
-        self.planning_time = out_data.get('planning_time', None)
-        result = out_data.get('result', [])
-        self.paths = [r['states'] for r in result if 'states' in r]
+            self.planning_time = out_data.get('planning_time', None)
+            result = out_data.get('result', [])
+            self.paths = [r['states'] for r in result if 'states' in r]
 
-        if len(self.paths) != len(self.robots_cfg):
-            print(
-                f'Warning: {len(self.robots_cfg)} robots in env but '
-                f'{len(self.paths)} paths in output.',
-                file=sys.stderr,
-            )
+            if len(self.paths) != len(self.robots_cfg):
+                print(
+                    f'Warning: {len(self.robots_cfg)} robots in env but '
+                    f'{len(self.paths)} paths in output.',
+                    file=sys.stderr,
+                )
+        else:
+            self.planning_time = None
+            self.paths = []
 
         self.total_steps = max((len(p) for p in self.paths), default=0)
 
@@ -160,7 +166,7 @@ class GeomVisualizer:
             )
             self.ax.add_patch(rect)
 
-        # Paths
+        # Paths (only when output was provided)
         for i, path in enumerate(self.paths):
             color = ROBOT_COLORS[i % len(ROBOT_COLORS)]
             pts = np.array([[s[0], s[1]] for s in path], dtype=float)
@@ -170,29 +176,81 @@ class GeomVisualizer:
                              label=f'Robot {i}')
 
         # Starts and goals from env config
+        legend_handles = []
         for i, robot in enumerate(self.robots_cfg):
             color = ROBOT_COLORS[i % len(ROBOT_COLORS)]
+            geom  = ROBOT_GEOMETRY.get(robot.get('type', ''), _DEFAULT_GEOM)
             start = robot.get('start', [])
             goal  = robot.get('goal',  [])
+            plotted = False
             if len(start) >= 2:
-                self.ax.scatter([start[0]], [start[1]],
-                                c=[color], marker='^', s=120, zorder=5)
+                x, y = start[0], start[1]
+                yaw = start[2] if len(start) > 2 else 0.0
+                patch = self._make_robot_outline_patch(geom, x, y, yaw, color, is_start=True)
+                self.ax.add_patch(patch)
+                plotted = True
             if len(goal) >= 2:
-                self.ax.scatter([goal[0]], [goal[1]],
-                                c=[color], marker='*', s=200, zorder=5)
+                x, y = goal[0], goal[1]
+                yaw = goal[2] if len(goal) > 2 else 0.0
+                patch = self._make_robot_outline_patch(geom, x, y, yaw, color, is_start=False)
+                self.ax.add_patch(patch)
+                plotted = True
+            if plotted and not self.paths:
+                legend_handles.append(
+                    mpatches.Patch(color=color, label=f'Robot {i}')
+                )
 
         # Legend + title
         if self.paths:
             self.ax.legend(loc='upper right', fontsize=9)
+        elif legend_handles:
+            start_proxy = mpatches.Patch(facecolor='lightgray', edgecolor='gray',
+                                         linestyle='--', lw=2.0, label='Start')
+            goal_proxy  = mpatches.Patch(facecolor='lightgray', edgecolor='gray',
+                                         linestyle='-',  lw=2.5, label='Goal')
+            self.ax.legend(
+                handles=legend_handles + [start_proxy, goal_proxy],
+                loc='upper right', fontsize=9,
+            )
 
-        title = 'Geometric Planner — Paths'
-        if self.planning_time is not None:
-            title += f'  (planning time: {self.planning_time:.4f}s)'
+        if self.paths:
+            title = 'Geometric Planner — Paths'
+            if self.planning_time is not None:
+                title += f'  (planning time: {self.planning_time:.4f}s)'
+        else:
+            title = 'Environment — starts (dashed outline) and goals (solid outline)'
         self.ax.set_title(title, fontsize=11)
 
     # ------------------------------------------------------------------
     # Animation
     # ------------------------------------------------------------------
+
+    def _make_robot_outline_patch(self, geom, x, y, yaw, color, is_start):
+        """Create a shaded outline patch for a start (dashed) or goal (solid) pose."""
+        from matplotlib.transforms import Affine2D
+        face_alpha = 0.18 if is_start else 0.28
+        r, g, b, _ = mcolors.to_rgba(color)
+        facecolor = (r, g, b, face_alpha)
+        ls = '--' if is_start else '-'
+        lw = 2.0 if is_start else 2.5
+        if geom['shape'] == 'sphere':
+            patch = mpatches.Circle(
+                (x, y), geom['radius'],
+                facecolor=facecolor, edgecolor=color, lw=lw,
+                linestyle=ls, zorder=4,
+            )
+        else:  # box
+            length, width = geom['length'], geom['width']
+            patch = mpatches.FancyBboxPatch(
+                (-length / 2, -width / 2), length, width,
+                boxstyle='square,pad=0',
+                facecolor=facecolor, edgecolor=color, lw=lw,
+                linestyle=ls, zorder=4,
+            )
+            patch.set_transform(
+                Affine2D().rotate(yaw).translate(x, y) + self.ax.transData
+            )
+        return patch
 
     def _make_robot_patch(self, geom, x, y, yaw, color):
         """Create a matplotlib patch matching the robot's FCL collision geometry."""
@@ -271,9 +329,10 @@ class GeomVisualizer:
     # ------------------------------------------------------------------
 
     def run(self):
-        self._animate()
-        self.fig.suptitle('Done — close window to exit.', fontsize=10, y=0.99)
-        plt.draw()
+        if self.paths:
+            self._animate()
+            self.fig.suptitle('Done — close window to exit.', fontsize=10, y=0.99)
+            plt.draw()
         plt.show()
 
 
@@ -286,7 +345,8 @@ def parse_args():
         description='Geometric planner output visualizer'
     )
     p.add_argument('env',    help='Path to environment YAML (e.g. straight.yaml)')
-    p.add_argument('output', help='Path to planner output YAML (e.g. out.yaml)')
+    p.add_argument('output', nargs='?', default=None,
+                   help='Path to planner output YAML (optional; omit to show env only)')
     p.add_argument('--anim-speed', type=float, default=1.0,
                    help='Animation playback speed multiplier (default: 1.0)')
     return p.parse_args()
