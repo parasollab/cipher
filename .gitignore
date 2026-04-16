@@ -1,6 +1,10 @@
 venv
 build/
+install/
 .vscode/
+
+experiments/results/
+experiments/configs/
 
 # Prerequisites
 *.d
