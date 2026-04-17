@@ -4,7 +4,7 @@
 // OMPL base headers
 #include <ompl/base/StateValidityChecker.h>
 #include <ompl/base/goals/GoalRegion.h>
-#include <ompl/base/spaces/CompoundStateSpace.h>
+// #include <ompl/base/spaces/CompoundStateSpace.h>
 
 // FCL
 #include <fcl/fcl.h>

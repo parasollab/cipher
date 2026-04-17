@@ -133,6 +133,8 @@ def main():
     script_dir = Path(__file__).parent
     project_root = script_dir.parent.parent
 
+    overwrite_results = False
+
     scenarios = [
         "narrow",
         # "open"
@@ -151,9 +153,12 @@ def main():
 
     summary_file = project_root / 'experiments' / 'results' / 'summary.csv'
 
-    # Write header to summary file
-    with open(summary_file, 'w') as f:
-        f.write("method,robots,seed,solved,planning_time,timed_out,makespan,sum_of_costs\n")
+    # Write header to summary file if it doesn't exist or if we're overwriting results
+    if summary_file.exists() and not overwrite_results:
+        print(f"Summary file {summary_file} already exists. Appending results.")
+    else:
+        with open(summary_file, 'w') as f:
+            f.write("method,robots,seed,solved,planning_time,timed_out,makespan,sum_of_costs\n")
 
     for scenario in scenarios:
         for method in methods:
@@ -163,9 +168,9 @@ def main():
                 str(project_root / 'experiments' / scenario / scenario),
                 str(project_root / 'experiments' / 'results' / scenario / f'{method["name"]}'),
                 str(project_root / 'examples' / 'config' / f'{method["name"]}.yaml'),
-                timeout=30,
+                timeout=600,  # 10 minutes
                 num_robots=[2, 4, 8, 16],
-                num_seeds=2,
+                num_seeds=10,
                 summary_file=summary_file,
                 base_output_dir=project_root
             )

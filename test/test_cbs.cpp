@@ -4,6 +4,7 @@
 #include "mapf/cbs.h"
 #include "utils/grid_decomposition.h"
 #include <ompl/base/spaces/SE2StateSpace.h>
+#include <fcl/fcl.h>
 #include <algorithm>
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -268,6 +269,126 @@ BOOST_AUTO_TEST_CASE(ThreeRobots_FindsSolution)
     space->freeState(s0); space->freeState(g0);
     space->freeState(s1); space->freeState(g1);
     space->freeState(s2); space->freeState(g2);
+}
+
+// ─── Obstacle volume filtering tests ────────────────────────────────────────
+
+// 4x4 grid on [0,1]x[0,1] — each cell is 0.25x0.25 = area 0.0625.
+
+static fcl::CollisionObjectf* makeBoxObstacle(float cx, float cy, float sx, float sy)
+{
+    auto box = std::make_shared<fcl::Boxf>(sx, sy, 1.0f);
+    auto* co = new fcl::CollisionObjectf(box);
+    co->setTranslation(fcl::Vector3f(cx, cy, 0.0f));
+    co->computeAABB();
+    return co;
+}
+
+BOOST_AUTO_TEST_CASE(ObstacleFilter_NoObstacles_BehaviorUnchanged)
+{
+    // Passing empty obstacles with threshold=1.0 should produce the same result
+    // as the plain two-argument constructor.
+    auto space  = makeSE2Space();
+    auto decomp = makeDecomp();
+
+    auto* start = space->allocState(); setXY(start, 0.125, 0.125);
+    auto* goal  = space->allocState(); setXY(goal,  0.875, 0.875);
+    int sr = decomp->locateRegion(start);
+    int gr = decomp->locateRegion(goal);
+
+    CBS solver(1, 10.0, {}, 1.0);
+    auto result = solver.solve(decomp, {start}, {goal});
+
+    BOOST_CHECK_EQUAL(result[0].front(), sr);
+    BOOST_CHECK_EQUAL(result[0].back(),  gr);
+
+    space->freeState(start);
+    space->freeState(goal);
+}
+
+BOOST_AUTO_TEST_CASE(ObstacleFilter_FullyCoveredRegion_ExcludedFromPath)
+{
+    // An obstacle that fully covers cell [0.25,0.5]x[0,0.25] (the second cell
+    // in the bottom row) should make that region invalid.  A path from the
+    // bottom-left corner to the bottom-right must route around it.
+    auto space  = makeSE2Space();
+    auto decomp = makeDecomp();
+
+    // Identify the blocked region by probing its centre.
+    auto* probe = space->allocState(); setXY(probe, 0.375, 0.125);
+    int blocked = decomp->locateRegion(probe);
+    space->freeState(probe);
+
+    // Obstacle exactly covers that cell: centre (0.375, 0.125), size 0.25x0.25.
+    auto* obs = makeBoxObstacle(0.375f, 0.125f, 0.25f, 0.25f);
+
+    CBS solver(1, 10.0, {obs}, 0.5);
+
+    auto* start = space->allocState(); setXY(start, 0.125, 0.125);
+    auto* goal  = space->allocState(); setXY(goal,  0.875, 0.125);
+
+    auto result = solver.solve(decomp, {start}, {goal});
+    const auto& path = result[0];
+
+    BOOST_CHECK_EQUAL(path.front(), decomp->locateRegion(start));
+    BOOST_CHECK_EQUAL(path.back(),  decomp->locateRegion(goal));
+    BOOST_CHECK_MESSAGE(
+        std::find(path.begin(), path.end(), blocked) == path.end(),
+        "path must not visit fully-covered region " << blocked);
+
+    space->freeState(start);
+    space->freeState(goal);
+    delete obs;
+}
+
+BOOST_AUTO_TEST_CASE(ObstacleFilter_PartialCoverage_BelowThreshold_RegionStillUsed)
+{
+    // An obstacle covering ~16 % of a cell (0.1x0.1 box inside a 0.25x0.25 cell)
+    // is below the 0.5 threshold and must NOT invalidate the region.
+    // We verify CBS still finds a complete path (the region remains reachable).
+    auto space  = makeSE2Space();
+    auto decomp = makeDecomp();
+
+    // Small obstacle fully inside cell [0.25,0.5]x[0,0.25].
+    // intersection area = 0.1*0.1 = 0.01 ; region area = 0.0625 ; ratio ≈ 0.16
+    auto* obs = makeBoxObstacle(0.375f, 0.125f, 0.1f, 0.1f);
+
+    CBS solver(1, 10.0, {obs}, 0.5);
+
+    auto* start = space->allocState(); setXY(start, 0.125, 0.125);
+    auto* goal  = space->allocState(); setXY(goal,  0.875, 0.125);
+
+    auto result = solver.solve(decomp, {start}, {goal});
+
+    BOOST_CHECK_EQUAL(result[0].front(), decomp->locateRegion(start));
+    BOOST_CHECK_EQUAL(result[0].back(),  decomp->locateRegion(goal));
+
+    space->freeState(start);
+    space->freeState(goal);
+    delete obs;
+}
+
+BOOST_AUTO_TEST_CASE(ObstacleFilter_AllPathsBlocked_Throws)
+{
+    // A wide obstacle covers all cells in columns 1 and 2 (x in [0.25, 0.75])
+    // across the full grid height, splitting the grid into two disconnected
+    // halves.  CBS must throw because no path exists.
+    auto space  = makeSE2Space();
+    auto decomp = makeDecomp();
+
+    // centre (0.5, 0.5), size (0.5 x 1.0) covers [0.25,0.75]x[0,1] entirely.
+    auto* obs = makeBoxObstacle(0.5f, 0.5f, 0.5f, 1.0f);
+
+    CBS solver(1, 5.0, {obs}, 0.5);
+
+    auto* start = space->allocState(); setXY(start, 0.125, 0.5);
+    auto* goal  = space->allocState(); setXY(goal,  0.875, 0.5);
+
+    BOOST_CHECK_THROW(solver.solve(decomp, {start}, {goal}), std::runtime_error);
+
+    space->freeState(start);
+    space->freeState(goal);
+    delete obs;
 }
 
 BOOST_AUTO_TEST_CASE(HighCapacity_AllowsSharing)

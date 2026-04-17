@@ -8,6 +8,7 @@
 #include <memory>
 #include <boost/graph/adjacency_list.hpp>
 #include <ompl/base/State.h>
+#include <fcl/fcl.h>
 #include "../utils/decomposition.h"
 
 // ============================================================================
@@ -105,7 +106,9 @@ struct CTNode {
 
 class CBS {
 public:
-    CBS(int region_capacity, double timeout);
+    CBS(int region_capacity, double timeout,
+        const std::vector<fcl::CollisionObjectf*>& obstacles = {},
+        double max_obstacle_volume_percent = 1.0);
 
     std::vector<std::vector<int>> solve(
         std::shared_ptr<DecompositionImpl> decomp,
@@ -117,9 +120,12 @@ public:
 private:
     int region_capacity_;  // Maximum robots per vertex/edge
     double timeout_;       // Maximum planning time in seconds
+    std::vector<fcl::CollisionObjectf*> obstacles_;
+    double max_obstacle_volume_percent_;
 
     // Graph construction
     RegionGraph buildRegionGraph(std::shared_ptr<DecompositionImpl> decomp);
+    std::set<int> computeInvalidRegions(std::shared_ptr<DecompositionImpl> decomp);
     void getNeighbors(const RegionGraph& graph, int region, std::vector<int>& neighbors);
 
     // High-level CBS

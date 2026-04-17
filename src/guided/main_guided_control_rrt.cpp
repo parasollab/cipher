@@ -90,6 +90,7 @@ int main(int argc, char** argv)
     double region_size = 5.0;
     double cbs_timeout = 30.0;
     int cbs_capacity = 1;
+    double max_obstacle_volume_percent = 1.0;
     int seed = -1;
 
     po::options_description desc("Allowed options");
@@ -125,6 +126,7 @@ int main(int argc, char** argv)
             if (cfg["region_size"])     region_size     = cfg["region_size"].as<double>();
             if (cfg["cbs_timeout"])     cbs_timeout     = cfg["cbs_timeout"].as<double>();
             if (cfg["cbs_capacity"])    cbs_capacity    = cfg["cbs_capacity"].as<int>();
+            if (cfg["max_obstacle_volume_percent"]) max_obstacle_volume_percent = cfg["max_obstacle_volume_percent"].as<double>();
             if (cfg["seed"])            seed            = cfg["seed"].as<int>();
         } catch (const YAML::Exception& e) {
             std::cerr << "ERROR loading config file: " << e.what() << std::endl;
@@ -320,7 +322,7 @@ int main(int argc, char** argv)
     std::cout << "Running CBS (capacity=" << cbs_capacity
               << ", timeout=" << cbs_timeout << "s)..." << std::endl;
 
-    CBS cbs(cbs_capacity, cbs_timeout);
+    CBS cbs(cbs_capacity, cbs_timeout, obstacles, max_obstacle_volume_percent);
     std::vector<std::vector<int>> region_paths = cbs.solve(decomp, start_states, goal_states);
 
     YAML::Node output;
