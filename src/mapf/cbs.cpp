@@ -13,8 +13,11 @@
 // Constructor
 // ============================================================================
 
-CBS::CBS(int region_capacity, double timeout)
-    : region_capacity_(region_capacity), timeout_(timeout)
+CBS::CBS(int region_capacity, double timeout,
+         const std::vector<fcl::CollisionObjectf*>& obstacles,
+         double max_obstacle_volume_percent)
+    : region_capacity_(region_capacity), timeout_(timeout),
+      obstacles_(obstacles), max_obstacle_volume_percent_(max_obstacle_volume_percent)
 {
 #ifdef CBS_DEBUG
     std::cout << "CBS Solver initialized with capacity=" << region_capacity_
@@ -175,11 +178,16 @@ RegionGraph CBS::buildRegionGraph(std::shared_ptr<DecompositionImpl> decomp)
     int num_regions = decomp->getNumRegions();
     RegionGraph graph(num_regions);
 
+    std::set<int> invalid = computeInvalidRegions(decomp);
+
     for (int i = 0; i < num_regions; ++i) {
+        if (invalid.count(i)) continue;
+
         std::vector<int> neighbors;
         decomp->getNeighbors(i, neighbors);
 
         for (int neighbor : neighbors) {
+            if (invalid.count(neighbor)) continue;
             EdgeProperty ep;
             ep.weight = 1.0;
             boost::add_edge(i, neighbor, ep, graph);
@@ -187,6 +195,33 @@ RegionGraph CBS::buildRegionGraph(std::shared_ptr<DecompositionImpl> decomp)
     }
 
     return graph;
+}
+
+std::set<int> CBS::computeInvalidRegions(std::shared_ptr<DecompositionImpl> decomp)
+{
+    std::set<int> invalid;
+    if (obstacles_.empty() || max_obstacle_volume_percent_ >= 1.0)
+        return invalid;
+
+    int num_regions = decomp->getNumRegions();
+    for (int i = 0; i < num_regions; ++i) {
+        double region_vol = decomp->getRegionVolume(i);
+        const auto bounds = decomp->getCellBounds(i);
+
+        double obstacle_area = 0.0;
+        for (auto* obs : obstacles_) {
+            const auto& aabb = obs->getAABB();
+            double ix = std::max(0.0, std::min((double)aabb.max_[0], bounds.high[0]) -
+                                      std::max((double)aabb.min_[0], bounds.low[0]));
+            double iy = std::max(0.0, std::min((double)aabb.max_[1], bounds.high[1]) -
+                                      std::max((double)aabb.min_[1], bounds.low[1]));
+            obstacle_area += ix * iy;
+        }
+
+        if (obstacle_area / region_vol > max_obstacle_volume_percent_)
+            invalid.insert(i);
+    }
+    return invalid;
 }
 
 void CBS::getNeighbors(const RegionGraph& graph, int region,

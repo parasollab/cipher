@@ -33,6 +33,10 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
         return getRegionBounds(rid);
     }
 
+    ompl::base::RealVectorBounds getCellBounds(int rid) const override {
+        return getBoundsForRegion(rid);
+    }
+
     // Override to only return cardinal neighbors (no diagonals)
     void getNeighbors(int rid, std::vector<int>& neighbors) const override;
 

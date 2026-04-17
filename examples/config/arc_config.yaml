@@ -1,0 +1,72 @@
+# Configuration file for ARC (Adaptive Robot Coordination)
+# Based on "Adaptive Robot Coordination: A Subproblem-Based Approach for
+# Hybrid Multi-Robot Motion Planning" by Solis et al., IEEE RA-L 2024
+#
+# ARC uses a hierarchical approach to resolve conflicts between robot paths:
+# 1. Compute initial decoupled paths (fast but may have collisions)
+# 2. Find conflicts and create local subproblems
+# 3. Solve subproblems using a 3-level hierarchy:
+#    - Level 1: Prioritized Query (waiting strategies, fastest)
+#    - Level 2: Decoupled PRM (sequential planning, medium speed)
+#    - Level 3: Composite PRM (coupled planning, most powerful)
+
+# ==============================================================================
+# Basic Planning Parameters
+# ==============================================================================
+
+# Goal distance threshold - robots must reach within this distance of their goals
+goal_threshold: 0.5
+
+# ==============================================================================
+# Subproblem Configuration
+# ==============================================================================
+
+# Initial time window size (timesteps before/after conflict)
+# When a conflict is detected, ARC creates a subproblem covering
+# [conflict_time - initial_time_window, conflict_time + initial_time_window]
+initial_time_window: 10
+
+# Time window expansion step (timesteps to add each expansion)
+# If solving fails, the time window is expanded by this amount
+time_window_expansion_step: 5
+
+# Maximum number of subproblem expansions
+# Limits how many times a subproblem can be expanded before giving up
+max_subproblem_expansions: 5
+
+# Spatial expansion factor for environment bounds
+# When expanding spatially, multiply bounds by this factor
+spatial_expansion_factor: 1.5
+
+# ==============================================================================
+# Algorithm 2: Hierarchical Solving Method Timeouts
+# ==============================================================================
+
+# Level 1: Prioritized Query timeout (seconds)
+# Fast method using waiting strategies, only works for 2-robot conflicts
+prioritized_query_timeout: 1.0
+
+# Level 2: Decoupled PRM timeout (seconds)
+# Medium-speed method using sequential prioritized planning
+decoupled_prm_timeout: 5.0
+
+# Level 3: Composite PRM timeout (seconds)
+# Most powerful method using coupled planning in composite space
+composite_prm_timeout: 10.0
+
+# ==============================================================================
+# Path Discretization
+# ==============================================================================
+
+# Number of states to interpolate between waypoints for collision checking
+# Higher values = more accurate collision detection but slower
+# Lower values = faster but may miss collisions
+states_per_check: 10
+
+# ==============================================================================
+# Termination Criteria
+# ==============================================================================
+
+# Maximum number of conflicts to resolve before giving up
+# Prevents infinite loops in pathological cases
+max_conflicts_resolved: 100
