@@ -249,6 +249,8 @@ set(guided_dbrrt_LIBS
 add_executable(guided_dbrrt
   ${guided_dbrrt_SOURCES}
   src/guided/main_guided_dbrrt.cpp
+  src/mapf/cbs.cpp
+  src/utils/grid_decomposition.cpp
 )
 target_include_directories(guided_dbrrt PRIVATE ${guided_dbrrt_INCLUDES})
 target_link_directories(guided_dbrrt PRIVATE ${YAML_LIBRARY_DIRS})
@@ -257,6 +259,8 @@ target_link_libraries(guided_dbrrt PRIVATE ${guided_dbrrt_LIBS})
 add_executable(main_guided_dbrrt
   ${guided_dbrrt_SOURCES}
   src/guided/main_guided_dbrrt.cpp
+  src/mapf/cbs.cpp
+  src/utils/grid_decomposition.cpp
 )
 target_include_directories(main_guided_dbrrt PRIVATE ${guided_dbrrt_INCLUDES})
 target_link_directories(main_guided_dbrrt PRIVATE ${YAML_LIBRARY_DIRS})

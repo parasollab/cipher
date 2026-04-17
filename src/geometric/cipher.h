@@ -13,9 +13,9 @@
 #include <string>
 #include <yaml-cpp/yaml.h>
 
-#include "decomposition.h"
+#include "utils/decomposition.h"
 #include "robots.h"
-// #include "coupled_rrt.h"
+#include "geometric/coupled_rrt.h"
 
 namespace ob = ompl::base;
 namespace oc = ompl::control;
@@ -61,7 +61,7 @@ struct CipherConfig {
     CoupledRRTConfig coupled_rrt_config;
 
     // Guided planner configuration
-    std::string guided_planner_method = "syclop_rrt";
+    std::string guided_planner_method = "guided_geometric_rrt";
     mr_syclop::GuidedPlannerConfig guided_planner_config;
 
     // Segmentation configuration
