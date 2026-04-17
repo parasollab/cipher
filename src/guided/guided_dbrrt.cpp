@@ -1885,7 +1885,7 @@ void guided_idbrrt(const dynobench::Problem &problem,
 void sample_guided(Eigen::Ref<Eigen::VectorXd> x,
             std::shared_ptr<DecompositionImpl> decomposition,
             int rid) {
-  auto bounds = static_cast<GridDecompositionImpl *>(decomposition.get())->getRegionBoundsPublic(rid);
+  auto bounds = static_cast<GridDecompositionImpl *>(decomposition.get())->getCellBounds(rid);
   Eigen::VectorXd lb = Eigen::Map<const Eigen::VectorXd>(bounds.low.data(), bounds.low.size());
   Eigen::VectorXd ub = Eigen::Map<const Eigen::VectorXd>(bounds.high.data(), bounds.high.size());
   x = lb + (ub - lb).cwiseProduct(0.5 * (Eigen::VectorXd::Random(lb.size()) + Eigen::VectorXd::Ones(lb.size())));
@@ -1914,8 +1914,8 @@ bool check_trajectory_valid(dynobench::TrajWrapper traj_wrapper, std::shared_ptr
   // };
 
   auto decomp = static_cast<GridDecompositionImpl *>(decomposition.get());
-  // auto bounds1 = decomp->getRegionBoundsPublic(region_path[region_idx]);
-  // auto bounds2 = region_idx > 0 ? decomp->getRegionBoundsPublic(region_path[region_idx - 1]) : bounds1;
+  // auto bounds1 = decomp->getCellBounds(region_path[region_idx]);
+  // auto bounds2 = region_idx > 0 ? decomp->getCellBounds(region_path[region_idx - 1]) : bounds1;
   for (size_t i = 0; i < traj_wrapper.get_size(); i++) {
     auto* state = eigen_to_ompl_state(traj_wrapper.get_state(i), ompl_robot);
     int rid = locate_region(traj_wrapper.get_state(i), ompl_robot, decomposition);
