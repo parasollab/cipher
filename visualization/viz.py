@@ -5,10 +5,11 @@ Supports both 2D and 3D environments — set `dimensions: 2` or `dimensions: 3`
 (default: 3) in the log file header.
 
 Usage:
-    python viz.py run.yaml               # ← → to navigate events, then animation
-    python viz.py run.yaml --auto        # auto-advance (default 1.5s), then animation
+    python viz.py run.yaml                        # ← → to navigate events, then animation
+    python viz.py run.yaml --env problem.yaml     # also draw obstacles from problem file
+    python viz.py run.yaml --auto                 # auto-advance (default 1.5s), then animation
     python viz.py run.yaml --auto --delay 0.8
-    python viz.py run.yaml --anim-speed 2.0   # animation playback speed multiplier
+    python viz.py run.yaml --anim-speed 2.0       # animation playback speed multiplier
 """
 
 import argparse
@@ -36,6 +37,9 @@ ROBOT_COLORS = [
     '#17becf',  # cyan
     '#bcbd22',  # yellow-green
 ]
+
+OBSTACLE_COLOR = '#444444'
+OBSTACLE_ALPHA = 0.55
 
 CELL_COLOR = '#888888'
 CELL_LW = 0.8
@@ -116,12 +120,23 @@ def path_duration(path):
 # ---------------------------------------------------------------------------
 
 class Visualizer:
-    def __init__(self, log_path, auto=False, delay=1.5, anim_speed=1.0):
+    def __init__(self, log_path, env_path=None, auto=False, delay=1.5, anim_speed=1.0):
         self.auto = auto
         self.delay = delay
         self.anim_speed = anim_speed
         self._advance_flag = False
         self._key_direction = 1
+
+        # Load obstacles from problem/environment file
+        self.obstacles = []
+        if env_path is not None:
+            with open(env_path) as f:
+                env_data = yaml.safe_load(f)
+            for obs in env_data.get('environment', {}).get('obstacles', []):
+                if obs.get('type') == 'box':
+                    center = np.asarray(obs['center'], float)
+                    size   = np.asarray(obs['size'],   float)
+                    self.obstacles.append((center - size / 2, center + size / 2))
 
         # Load log
         with open(log_path) as f:
@@ -204,6 +219,7 @@ class Visualizer:
         self.fig.canvas.mpl_connect('key_press_event', self._on_key)
 
         self._draw_all_cells()
+        self._draw_obstacles()
         self._draw_starts_goals()
         plt.tight_layout()
         plt.draw()
@@ -335,11 +351,20 @@ class Visualizer:
         self.mapf_paths = {}
         self.collisions = []
         self._draw_all_cells()
+        self._draw_obstacles()
         self._draw_starts_goals()
 
     # ------------------------------------------------------------------
     # Persistent scene elements
     # ------------------------------------------------------------------
+
+    def _draw_obstacles(self):
+        self._clear_artists('obstacles')
+        arts = []
+        for bmin, bmax in self.obstacles:
+            arts.append(self._fill_cell(bmin, bmax, OBSTACLE_COLOR, alpha=OBSTACLE_ALPHA))
+            arts.extend(self._draw_cell_edges(bmin, bmax, OBSTACLE_COLOR, lw=1.2))
+        self.artists['obstacles'] = arts
 
     def _draw_all_cells(self, coupled_ids=None):
         if coupled_ids is None:
@@ -689,7 +714,9 @@ def parse_args():
     p = argparse.ArgumentParser(
         description='CIPHER multi-robot motion planning visualizer'
     )
-    p.add_argument('log', help='Path to YAML log file')
+    p.add_argument('log', help='Path to YAML solution/log file')
+    p.add_argument('--env', default=None, metavar='ENV_YAML',
+                   help='Path to problem/environment YAML file (to draw obstacles)')
     p.add_argument('--auto', action='store_true',
                    help='Auto-advance between events (default: key-press)')
     p.add_argument('--delay', type=float, default=1.5,
@@ -701,8 +728,8 @@ def parse_args():
 
 def main():
     args = parse_args()
-    viz = Visualizer(args.log, auto=args.auto, delay=args.delay,
-                     anim_speed=args.anim_speed)
+    viz = Visualizer(args.log, env_path=args.env, auto=args.auto,
+                     delay=args.delay, anim_speed=args.anim_speed)
     viz.run()
 
 
