@@ -4,7 +4,9 @@
 max_distance: 5.0
 
 # Goal threshold - distance within which a robot is considered at goal
-goal_threshold: 2.0
+goal_threshold: 0.5
 
 # Time limit for building each individual policy tree (seconds)
 policy_timeout: 5.0
+
+timelimit: 600

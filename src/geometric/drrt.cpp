@@ -1129,8 +1129,8 @@ int main(int argc, char** argv) {
                 spars_params.has_stretch_factor = true;
                 spars_params.stretch_factor = cfg["spars_stretch_factor"].as<double>();
             }
-            if (cfg["time_limit"]) {
-                time_limit = cfg["time_limit"].as<double>();
+            if (cfg["timelimit"]) {
+                time_limit = cfg["timelimit"].as<double>();
             }
             if (cfg["seed"]) {
                 seed = cfg["seed"].as<int>();

@@ -70,3 +70,5 @@ states_per_check: 10
 # Maximum number of conflicts to resolve before giving up
 # Prevents infinite loops in pathological cases
 max_conflicts_resolved: 100
+
+timelimit: 600

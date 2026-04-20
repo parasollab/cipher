@@ -103,7 +103,7 @@ def run_planner(executable, problem_file, output_file, config_file, timeout, see
 
     return result
 
-def run_method(method, executable, problem_file, output_file, config_file, timeout, num_robots, num_seeds, summary_file, base_output_dir=None):
+def run_method(method, scenario, executable, problem_file, output_file, config_file, timeout, num_robots, num_seeds, summary_file, base_output_dir=None):
     """
     Run the planner for a range of robot counts and print results.
     Stops early if the planner fails to solve all instances for a given robot count.
@@ -118,9 +118,15 @@ def run_method(method, executable, problem_file, output_file, config_file, timeo
             if result['solved']:
                 success_count += 1
 
-            # Write results to summary file
-            with open(summary_file, 'a') as f:
-                f.write(f"{method},{robots},{seed},{result['solved']},{result['planning_time']:.2f},{result['timed_out']},{result['makespan']},{result['sum_of_costs']}\n")
+            # Write results to summary file, overwriting any existing entry for this key
+            new_line = f"{method},{scenario},{robots},{seed},{result['solved']},{result['planning_time']:.5f},{result['timed_out']},{result['makespan']},{result['sum_of_costs']}\n"
+            with open(summary_file, 'r') as f:
+                lines = f.readlines()
+            key_prefix = f"{method},{scenario},{robots},{seed},"
+            lines = [l for l in lines if not l.startswith(key_prefix)]
+            lines.append(new_line)
+            with open(summary_file, 'w') as f:
+                f.writelines(lines)
 
         print(f"Successfully solved {success_count}/{num_seeds} instances for {robots} robots.")
 
@@ -136,8 +142,8 @@ def main():
     overwrite_results = False
 
     scenarios = [
-        "narrow",
-        # "open"
+        # "narrow",
+        "open"
     ]
 
     methods = [
@@ -148,6 +154,19 @@ def main():
     {
         'name': 'decoupled_rrt',
         'executable': str(project_root / 'build' / 'geometric_decoupled_rrt'),
+    },
+    {
+        'name': 'srrt',
+        'executable': str(project_root / 'build' / 'srrt'),
+    },
+    {
+        'name': 'drrt',
+        'executable': str(project_root / 'build' / 'drrt'),
+    },
+    {
+        'name': 'arc',
+        'executable': str(project_root / 'build' / 'arc'),
+
     }
     ]
 
@@ -158,12 +177,13 @@ def main():
         print(f"Summary file {summary_file} already exists. Appending results.")
     else:
         with open(summary_file, 'w') as f:
-            f.write("method,robots,seed,solved,planning_time,timed_out,makespan,sum_of_costs\n")
+            f.write("method,scenario,robots,seed,solved,planning_time,timed_out,makespan,sum_of_costs\n")
 
     for scenario in scenarios:
         for method in methods:
             run_method(
                 method['name'],
+                scenario,
                 method['executable'],
                 str(project_root / 'experiments' / scenario / scenario),
                 str(project_root / 'experiments' / 'results' / scenario / f'{method["name"]}'),

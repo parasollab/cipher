@@ -18,3 +18,5 @@ spars_dense_delta_fraction: 0.001
 
 # Stretch factor for path quality (1.1 - 3.0)
 spars_stretch_factor: 3.0
+
+timelimit: 600
