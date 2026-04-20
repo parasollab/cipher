@@ -344,6 +344,9 @@ void guided_dbrrtConnect(const dynobench::Problem &problem,
                   std::shared_ptr<dynobench::Model_robot> robot,
                   const Options_dbrrt &options_dbrrt,
                   const Options_trajopt &options_trajopt,
+                  std::shared_ptr<Robot> ompl_robot,
+                  std::shared_ptr<DecompositionImpl> decomposition,
+                  const std::vector<int> &decomp_path,
                   dynobench::Trajectory &traj_out,
                   dynobench::Info_out &info_out) {
 
@@ -543,6 +546,8 @@ void guided_dbrrtConnect(const dynobench::Problem &problem,
   Eigen::VectorXd __expand_end(robot->nx);
   Eigen::VectorXd aux_last_state(robot->nx);
 
+  int current_region_idx = 0;
+
   dynobench::Trajectory traj_out_fwd, traj_out_bwd;
   while (!stop_search()) {
     if (time_bench.expands % print_every == 0)
@@ -564,7 +569,8 @@ void guided_dbrrtConnect(const dynobench::Problem &problem,
         x_rand = nodes_in_Tn.at(idx)->state_eig;
       }
     } else {
-      robot->sample_uniform(x_rand);
+      // robot->sample_uniform(x_rand);
+      sample_guided(x_rand, decomposition, decomp_path[current_region_idx]);
     }
 
     rand_node->state_eig = x_rand;
@@ -958,6 +964,9 @@ void guided_dbrrt(const dynobench::Problem &problem,
            std::shared_ptr<dynobench::Model_robot> robot,
            const Options_dbrrt &options_dbrrt,
            const Options_trajopt &options_trajopt,
+           std::shared_ptr<Robot> ompl_robot,
+           std::shared_ptr<DecompositionImpl> decomposition,
+           const std::vector<int> &decomp_path,
            dynobench::Trajectory &traj_out, dynobench::Info_out &info_out) {
 
   if (options_dbrrt.verbose) {
@@ -1108,7 +1117,12 @@ void guided_dbrrt(const dynobench::Problem &problem,
 
   std::vector<AStarNode *> neighbors_n;
 
+  int region_idx = 0;
+  std::unordered_map<int, int> coverage_map;
+  int min_coverage = 10;
+
   while (!stop_search()) {
+    bool sample_goal = false;
 
     if (options_dbrrt.verbose && time_bench.expands % 500 == 0) {
       std::cout << "expands: " << time_bench.expands
@@ -1121,10 +1135,19 @@ void guided_dbrrt(const dynobench::Problem &problem,
     bool expand_near_goal =
         static_cast<double>(rand()) / RAND_MAX < options_dbrrt.goal_bias;
 
-    if (expand_near_goal) {
+    if (coverage_map[region_idx] > min_coverage) {
+        if (region_idx < (int)decomp_path.size()-1) {
+            region_idx++;
+        } else {
+            sample_goal = true;
+        }
+    }
+
+    if (expand_near_goal || sample_goal) {
       x_rand = problem.goal;
     } else {
-      robot->sample_uniform(x_rand);
+      // robot->sample_uniform(x_rand);
+      sample_guided(x_rand, decomposition, decomp_path[region_idx]);
     }
 
     rand_node->state_eig = x_rand;
@@ -1201,6 +1224,13 @@ void guided_dbrrt(const dynobench::Problem &problem,
           check_lazy_trajectory(lazy_traj, *robot, time_bench, traj_wrapper,
                                 aux_last_state, nullptr, nullptr);
 
+      // std::cout << "Traj " << i << " is lazy valid: " << motion_valid << std::endl;
+
+      motion_valid = motion_valid && check_trajectory_valid(traj_wrapper,
+                                                      ompl_robot, decomposition, decomp_path, region_idx);
+
+      // std::cout << "Traj " << i << " is in region " << region_idx << ": " << motion_valid << std::endl;
+
       if (!motion_valid)
         continue;
 
@@ -1229,12 +1259,33 @@ void guided_dbrrt(const dynobench::Problem &problem,
           __expand_end = traj_wrapper.get_state(chosen_index);
         }
 
+        bool ends_in_region = false;
+        bool keep = false;
+
+        // Check if end state is in the next region of the decomposition
+        int end_region_idx = locate_region(__expand_end, ompl_robot, decomposition);
+        if ((region_idx > 0 && end_region_idx == decomp_path[region_idx - 1])) {
+          keep = true;
+          ends_in_region = false;
+        }
+        else if (end_region_idx == decomp_path[region_idx]) {
+          ends_in_region = true;
+          keep = true;
+        }
+        
         if (options_dbrrt.debug) {
           chosen_traj_debug = dynobench::trajWrapper_2_Trajectory(traj_wrapper);
         }
 
-        if (options_dbrrt.choose_first_motion_valid || chosen_index != -1)
-          break;
+        if (ends_in_region) {
+          coverage_map[region_idx]++;
+        }
+
+        if (keep) {
+          if (options_dbrrt.choose_first_motion_valid || chosen_index != -1) {
+            break;
+          }
+        }
       }
     }
 
@@ -1735,6 +1786,9 @@ void guided_idbrrt(const dynobench::Problem &problem,
             std::shared_ptr<dynobench::Model_robot> robot,
             const Options_dbrrt &options_dbrrt,
             const Options_trajopt &options_trajopt,
+            std::shared_ptr<Robot> ompl_robot,
+            std::shared_ptr<DecompositionImpl> decomposition,
+            const std::vector<int> &decomp_path,
             dynobench::Trajectory &traj_out, dynobench::Info_out &info_out) {
   bool finished = false;
   Options_dbrrt options_dbrrt_local = options_dbrrt;
@@ -1785,10 +1839,10 @@ void guided_idbrrt(const dynobench::Problem &problem,
     dynobench::Trajectory traj_dbrrt;
 
     if (options_dbrrt_local.use_connect) {
-      guided_dbrrtConnect(problem, robot, options_dbrrt_local, options_trajopt,
+      guided_dbrrtConnect(problem, robot, options_dbrrt_local, options_trajopt, ompl_robot, decomposition, decomp_path,
                    traj_dbrrt, info_out_local);
     } else {
-      guided_dbrrt(problem, robot, options_dbrrt_local, options_trajopt, traj_dbrrt,
+      guided_dbrrt(problem, robot, options_dbrrt_local, options_trajopt, ompl_robot, decomposition, decomp_path, traj_dbrrt,
             info_out_local);
     }
 
@@ -1826,6 +1880,55 @@ void guided_idbrrt(const dynobench::Problem &problem,
   if (!finished) {
     info_out.solved = false;
   }
+}
+
+void sample_guided(Eigen::Ref<Eigen::VectorXd> x,
+            std::shared_ptr<DecompositionImpl> decomposition,
+            int rid) {
+  auto bounds = static_cast<GridDecompositionImpl *>(decomposition.get())->getCellBounds(rid);
+  Eigen::VectorXd lb = Eigen::Map<const Eigen::VectorXd>(bounds.low.data(), bounds.low.size());
+  Eigen::VectorXd ub = Eigen::Map<const Eigen::VectorXd>(bounds.high.data(), bounds.high.size());
+  x = lb + (ub - lb).cwiseProduct(0.5 * (Eigen::VectorXd::Random(lb.size()) + Eigen::VectorXd::Ones(lb.size())));
+}
+
+ob::State* eigen_to_ompl_state(const Eigen::Ref<const Eigen::VectorXd> x, std::shared_ptr<Robot> ompl_robot) {
+  std::vector<double> x_std(x.data(), x.data() + x.size());
+  auto* state = ompl_robot->getSpaceInformation()->getStateSpace()->allocState();
+  ompl_robot->getSpaceInformation()->getStateSpace()->copyFromReals(state, x_std);
+  return state;
+}
+
+int locate_region(const Eigen::Ref<const Eigen::VectorXd> x, std::shared_ptr<Robot> ompl_robot, std::shared_ptr<DecompositionImpl> decomposition) {
+  auto grid_decomp = static_cast<GridDecompositionImpl *>(decomposition.get());
+  auto* state = eigen_to_ompl_state(x, ompl_robot);
+  return grid_decomp->locateRegion(state);
+}
+
+bool check_trajectory_valid(dynobench::TrajWrapper traj_wrapper, std::shared_ptr<Robot> ompl_robot, std::shared_ptr<DecompositionImpl> decomposition, std::vector<int> region_path, int region_idx) {
+  bool valid = true;
+
+  // auto print_vec = [](const std::vector<double>& v) {
+  //   std::cout << "[";
+  //   for (size_t i = 0; i < v.size(); ++i) { if (i) std::cout << ", "; std::cout << v[i]; }
+  //   std::cout << "]";
+  // };
+
+  auto decomp = static_cast<GridDecompositionImpl *>(decomposition.get());
+  // auto bounds1 = decomp->getCellBounds(region_path[region_idx]);
+  // auto bounds2 = region_idx > 0 ? decomp->getCellBounds(region_path[region_idx - 1]) : bounds1;
+  for (size_t i = 0; i < traj_wrapper.get_size(); i++) {
+    auto* state = eigen_to_ompl_state(traj_wrapper.get_state(i), ompl_robot);
+    int rid = locate_region(traj_wrapper.get_state(i), ompl_robot, decomposition);
+    // ompl_robot->getSpaceInformation()->getStateSpace()->printState(state, std::cout);
+    // std::cout << " valid regions: " << region_path[region_idx] << " and " << (region_idx > 0 ? region_path[region_idx - 1] : -1) << " state region: " << rid << std::endl;
+    // std::cout << "bounds1: low "; print_vec(bounds1.low); std::cout << " high "; print_vec(bounds1.high); std::cout << std::endl;
+    // std::cout << "bounds2: low "; print_vec(bounds2.low); std::cout << " high "; print_vec(bounds2.high); std::cout << std::endl;
+    if ((region_idx > 0 && rid != region_path[region_idx -1]) && rid != region_path[region_idx]) {
+      valid = false;
+      break;
+    }
+  }
+  return valid;
 }
 
 } // namespace dynoplan

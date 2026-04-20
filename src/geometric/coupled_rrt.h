@@ -9,6 +9,9 @@
 // FCL
 #include <fcl/fcl.h>
 
+// YAML
+#include <yaml-cpp/yaml.h>
+
 // Standard library
 #include <memory>
 #include <string>
@@ -63,9 +66,45 @@ public:
 
 private:
     const ob::CompoundStateSpace* css_;
-    std::vector<ob::State*> goal_states_;  // non-owning; lifetime managed by main
+    std::vector<ob::State*> goal_states_;  // non-owning; lifetime managed by planner
 };
 
 CoupledRRTConfig loadConfigFromYAML(const std::string& configFile);
+
+
+// Planner that jointly plans for all robots in a compound state space using RRT.
+// Instantiate with a CoupledRRTConfig and call plan() with a parsed environment.
+//
+// env YAML schema (same as the standalone binary):
+//   environment:
+//     min: [x, y]
+//     max: [x, y]
+//     obstacles:  (optional)
+//       - type: box
+//         size: [w, h]
+//         center: [x, y]
+//   robots:
+//     - type: <robot_type>
+//       start: [...]
+//       goal:  [...]
+//
+// Returns a YAML::Node with:
+//   solved:        bool
+//   planning_time: double (seconds)
+//   result:        (present only when solved)
+//     - states: [[x, y, yaw], ...]   (one entry per robot)
+class CoupledRRTPlanner
+{
+public:
+    explicit CoupledRRTPlanner(const CoupledRRTConfig& config = {});
+
+    // Solve the multi-robot problem described by env.
+    // Returns the output node (solved, planning_time, result).
+    YAML::Node plan(const YAML::Node& env);
+
+private:
+    CoupledRRTConfig config_;
+};
+
 
 #endif // COUPLED_RRT_H

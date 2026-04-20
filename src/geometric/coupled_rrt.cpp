@@ -168,66 +168,20 @@ CoupledRRTConfig loadConfigFromYAML(const std::string& configFile)
 }
 
 
-// ── main ──────────────────────────────────────────────────────────────────────
+// ── CoupledRRTPlanner ─────────────────────────────────────────────────────────
 
-int main(int argc, char** argv)
+CoupledRRTPlanner::CoupledRRTPlanner(const CoupledRRTConfig& config)
+    : config_(config) {}
+
+YAML::Node CoupledRRTPlanner::plan(const YAML::Node& env)
 {
-    // Parse command line arguments
-    std::string inputFile;
-    std::string outputFile;
-    std::string configFile;
-    CoupledRRTConfig config;
-
-    po::options_description desc("Allowed options");
-    desc.add_options()
-        ("help,h", "Show help message")
-        ("input,i", po::value<std::string>(&inputFile)->required(), "Input YAML file")
-        ("output,o", po::value<std::string>(&outputFile)->required(), "Output YAML file")
-        ("cfg,c", po::value<std::string>(&configFile), "Configuration YAML file");
-
-    po::variables_map vm;
-    try {
-        po::store(po::parse_command_line(argc, argv, desc), vm);
-
-        if (vm.count("help")) {
-            std::cout << desc << std::endl;
-            return 0;
-        }
-
-        po::notify(vm);
-    } catch (const po::error& e) {
-        std::cerr << "ERROR: " << e.what() << std::endl;
-        std::cout << desc << std::endl;
-        return 1;
-    }
-
-    // Load configuration file if provided
-    if (vm.count("cfg")) {
-        try {
-            config = loadConfigFromYAML(configFile);
-        } catch (const YAML::Exception&) {
-            return 1;
-        }
-    }
-
-    // Set the random seed
-    if (config.seed >= 0) {
-        std::cout << "Setting random seed to: " << config.seed << std::endl;
-        ompl::RNG::setSeed(config.seed);
+    // Apply random seed
+    if (config_.seed >= 0) {
+        std::cout << "Setting random seed to: " << config_.seed << std::endl;
+        ompl::RNG::setSeed(config_.seed);
     } else {
         std::cout << "Using random seed" << std::endl;
     }
-
-    // Load YAML configuration
-    std::cout << "Loading YAML file: " << inputFile << std::endl;
-    YAML::Node env;
-    try {
-        env = YAML::LoadFile(inputFile);
-    } catch (const YAML::Exception& e) {
-        std::cerr << "ERROR loading YAML file: " << e.what() << std::endl;
-        return 1;
-    }
-    std::cout << "YAML loaded successfully" << std::endl;
 
     // Parse environment bounds
     const auto& env_min = env["environment"]["min"];
@@ -239,7 +193,7 @@ int main(int argc, char** argv)
     position_bounds.setHigh(0, env_max[0].as<double>());
     position_bounds.setHigh(1, env_max[1].as<double>());
 
-    // Create FCL collision manager for obstacles
+    // Build FCL collision manager for obstacles
     auto col_mng_environment = std::make_shared<fcl::DynamicAABBTreeCollisionManagerf>();
     std::vector<fcl::CollisionObjectf*> obstacles;
 
@@ -270,10 +224,9 @@ int main(int argc, char** argv)
 
     std::cout << "Loaded " << obstacles.size() << " obstacles" << std::endl;
 
-    // Build the compound state space and collect per-robot state spaces / robots
+    // Build compound state space and per-robot structures
     auto compound_ss = std::make_shared<ob::CompoundStateSpace>();
     std::vector<std::shared_ptr<Robot>> robots;
-    // Individual state spaces kept for allocating/freeing per-robot start/goal states
     std::vector<ob::StateSpacePtr> robot_spaces;
 
     std::cout << "Creating robots..." << std::endl;
@@ -289,20 +242,20 @@ int main(int argc, char** argv)
         compound_ss->addSubspace(state_space, 1.0);
         robots.push_back(robot);
         robot_spaces.push_back(state_space);
-        robot_idx++;
+        ++robot_idx;
     }
 
-    const int num_robots = robots.size();
+    const int num_robots = static_cast<int>(robots.size());
     std::cout << "Planning for " << num_robots << " robots" << std::endl;
 
-    // Create single SpaceInformation over the compound space
+    // SpaceInformation over the compound space
     auto compound_si = std::make_shared<ob::SpaceInformation>(compound_ss);
     compound_si->setStateValidityChecker(
         std::make_shared<CompoundStateValidityChecker>(
             compound_si, col_mng_environment, robots));
     compound_si->setup();
 
-    // Allocate per-robot start/goal states and fill from YAML
+    // Allocate per-robot start/goal states from YAML
     std::vector<ob::State*> start_states;
     std::vector<ob::State*> goal_states;
     robot_idx = 0;
@@ -310,17 +263,14 @@ int main(int argc, char** argv)
     for (const auto& robot_node : env["robots"]) {
         auto robot_si = robots[robot_idx]->getSpaceInformation();
 
-        // Parse start/goal generically via copyFromReals so any state space is supported
-        const auto& start_vec = robot_node["start"];
         std::vector<double> start_reals;
-        for (const auto& v : start_vec) start_reals.push_back(v.as<double>());
+        for (const auto& v : robot_node["start"]) start_reals.push_back(v.as<double>());
         auto* start_state = robot_si->getStateSpace()->allocState();
         robot_si->getStateSpace()->copyFromReals(start_state, start_reals);
         start_states.push_back(start_state);
 
-        const auto& goal_vec = robot_node["goal"];
         std::vector<double> goal_reals;
-        for (const auto& v : goal_vec) goal_reals.push_back(v.as<double>());
+        for (const auto& v : robot_node["goal"]) goal_reals.push_back(v.as<double>());
         auto* goal_state = robot_si->getStateSpace()->allocState();
         robot_si->getStateSpace()->copyFromReals(goal_state, goal_reals);
         goal_states.push_back(goal_state);
@@ -329,11 +279,10 @@ int main(int argc, char** argv)
                   << "  Start: (" << start_reals[0] << ", " << start_reals[1] << ")"
                   << "  Goal: ("  << goal_reals[0]  << ", " << goal_reals[1]  << ")"
                   << std::endl;
-
-        robot_idx++;
+        ++robot_idx;
     }
 
-    // Build compound start state by copying per-robot states into components
+    // Build compound start state
     auto compound_start = compound_si->allocState();
     {
         auto cs = compound_start->as<ob::CompoundState>();
@@ -346,46 +295,37 @@ int main(int argc, char** argv)
     auto pdef = std::make_shared<ob::ProblemDefinition>(compound_si);
     pdef->addStartState(compound_start);
     pdef->setGoal(std::make_shared<CompoundGoalCondition>(
-        compound_si, compound_ss.get(), goal_states, config.goal_threshold));
+        compound_si, compound_ss.get(), goal_states, config_.goal_threshold));
 
-    // Create and configure the RRT planner
-    auto planner = std::make_shared<og::RRT>(compound_si);
-    planner->setGoalBias(config.goal_bias);
-    planner->setProblemDefinition(pdef);
-    planner->setup();
+    // Configure and run RRT
+    auto rrt = std::make_shared<og::RRT>(compound_si);
+    rrt->setGoalBias(config_.goal_bias);
+    rrt->setProblemDefinition(pdef);
+    rrt->setup();
 
     std::cout << "Planner configured. Starting search..." << std::endl;
-    std::cout << "  Goal threshold: " << config.goal_threshold << std::endl;
-    std::cout << "  Goal bias: " << config.goal_bias << std::endl;
-    std::cout << "  Total time limit: " << config.time_limit << " seconds" << std::endl;
+    std::cout << "  Goal threshold: " << config_.goal_threshold << std::endl;
+    std::cout << "  Goal bias:      " << config_.goal_bias      << std::endl;
+    std::cout << "  Time limit:     " << config_.time_limit     << " s" << std::endl;
 
-    // Solve
-    auto start_time = std::chrono::steady_clock::now();
-    ob::PlannerStatus status = planner->solve(ob::timedPlannerTerminationCondition(config.time_limit));
-    auto end_time = std::chrono::steady_clock::now();
-    double planning_time = std::chrono::duration<double>(end_time - start_time).count();
+    auto t0 = std::chrono::steady_clock::now();
+    ob::PlannerStatus status = rrt->solve(ob::timedPlannerTerminationCondition(config_.time_limit));
+    double planning_time = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 
     bool solved = (status == ob::PlannerStatus::EXACT_SOLUTION);
+    std::cout << "Planning completed in " << planning_time << " s  |  solved: " << (solved ? "YES" : "NO") << std::endl;
 
-    std::cout << "Planning completed in " << planning_time << " seconds" << std::endl;
-    std::cout << "Solution found: " << (solved ? "YES" : "NO") << std::endl;
-
-    // Write output
+    // Build output node
     YAML::Node output;
     output["solved"] = solved;
     output["planning_time"] = planning_time;
 
     if (solved) {
-        std::cout << "Extracting solution path..." << std::endl;
-
         auto path = pdef->getSolutionPath()->as<og::PathGeometric>();
         path->interpolate();
+        std::cout << "Path has " << path->getStateCount() << " states after interpolation" << std::endl;
 
-        std::cout << "  Path has " << path->getStateCount() << " states after interpolation" << std::endl;
-
-        // Build per-robot state lists from the compound path
         std::vector<YAML::Node> robot_states(num_robots);
-
         for (size_t s = 0; s < path->getStateCount(); ++s) {
             const auto* compound = path->getState(s)->as<ob::CompoundState>();
             for (int r = 0; r < num_robots; ++r) {
@@ -405,33 +345,77 @@ int main(int argc, char** argv)
             result.push_back(robot_data);
         }
         output["result"] = result;
-
-        std::cout << "Solution extracted successfully" << std::endl;
     }
 
-    // Write output file
+    // Cleanup
+    compound_si->freeState(compound_start);
+    for (int r = 0; r < num_robots; ++r) {
+        robot_spaces[r]->freeState(start_states[r]);
+        robot_spaces[r]->freeState(goal_states[r]);
+    }
+    for (auto* co : obstacles) {
+        delete co;
+    }
+
+    return output;
+}
+
+
+// ── main ──────────────────────────────────────────────────────────────────────
+
+int main(int argc, char** argv)
+{
+    std::string inputFile;
+    std::string outputFile;
+    std::string configFile;
+    CoupledRRTConfig config;
+
+    po::options_description desc("Allowed options");
+    desc.add_options()
+        ("help,h", "Show help message")
+        ("input,i", po::value<std::string>(&inputFile)->required(), "Input YAML file")
+        ("output,o", po::value<std::string>(&outputFile)->required(), "Output YAML file")
+        ("cfg,c", po::value<std::string>(&configFile), "Configuration YAML file");
+
+    po::variables_map vm;
+    try {
+        po::store(po::parse_command_line(argc, argv, desc), vm);
+        if (vm.count("help")) { std::cout << desc << std::endl; return 0; }
+        po::notify(vm);
+    } catch (const po::error& e) {
+        std::cerr << "ERROR: " << e.what() << std::endl;
+        std::cout << desc << std::endl;
+        return 1;
+    }
+
+    if (vm.count("cfg")) {
+        try {
+            config = loadConfigFromYAML(configFile);
+        } catch (const YAML::Exception&) {
+            return 1;
+        }
+    }
+
+    std::cout << "Loading YAML file: " << inputFile << std::endl;
+    YAML::Node env;
+    try {
+        env = YAML::LoadFile(inputFile);
+    } catch (const YAML::Exception& e) {
+        std::cerr << "ERROR loading YAML file: " << e.what() << std::endl;
+        return 1;
+    }
+
+    CoupledRRTPlanner planner(config);
+    YAML::Node output = planner.plan(env);
+
     try {
         std::ofstream fout(outputFile);
         fout << output;
-        fout.close();
         std::cout << "Output written to " << outputFile << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "ERROR writing output file: " << e.what() << std::endl;
         return 1;
     }
 
-    // Cleanup
-    compound_si->freeState(compound_start);
-
-    for (int r = 0; r < num_robots; ++r) {
-        robot_spaces[r]->freeState(start_states[r]);
-        robot_spaces[r]->freeState(goal_states[r]);
-    }
-
-    for (auto* co : obstacles) {
-        delete co;
-    }
-
-    std::cout << "Done!" << std::endl;
     return 0;
 }

@@ -4,6 +4,14 @@
 #include <string>
 #include <vector>
 
+#include "utils/decomposition.h"
+#include "utils/grid_decomposition.h"
+#include "ompl/base/spaces/RealVectorBounds.h"
+
+#include "robots.h"
+
+namespace ob = ompl::base;
+
 namespace dynoplan {
 
 struct Options_dbrrt {
@@ -12,7 +20,7 @@ struct Options_dbrrt {
   double prob_expand_forward = 0.5;
   bool extract_primitives = false;
   bool add_to_search_tree = false;
-  bool do_optimization = false;
+  bool do_optimization = true;
   int seed = -1;
   double cost_jump = 1;
   double best_cost_prune_factor = .9;
@@ -23,15 +31,15 @@ struct Options_dbrrt {
   bool choose_first_motion_valid = true;
   double goal_region = .3;
   double cost_bound = 200;
-  double goal_bias = .1;
+  double goal_bias = 0.0;
   bool debug = false;
   bool verbose = true; // print search progress and status messages
   bool new_invariance = true;
   double delta = .3;
-  int max_expands = 10000;
+  int max_expands = 1000;
   double timelimit = 10000; // in ms second
   bool use_nigh_nn = true;
-  size_t max_motions = 1000;
+  size_t max_motions = 10000;
   std::vector<Motion> *motions_ptr = nullptr; // pointer to loaded motions
   std::string motionsFile = "";
   bool cut_actions = false;
@@ -110,12 +118,18 @@ void guided_dbrrt(const dynobench::Problem &problem,
            std::shared_ptr<dynobench::Model_robot> robot,
            const Options_dbrrt &options_dbrrt,
            const Options_trajopt &options_trajopt,
+           std::shared_ptr<Robot> ompl_robot,
+           std::shared_ptr<DecompositionImpl> decomposition,
+           const std::vector<int> &decomp_path,
            dynobench::Trajectory &traj_out, dynobench::Info_out &out_info_db);
 
 void guided_dbrrtConnect(const dynobench::Problem &problem,
                   std::shared_ptr<dynobench::Model_robot> robot,
                   const Options_dbrrt &options_dbrrt,
                   const Options_trajopt &options_trajopt,
+                  std::shared_ptr<Robot> ompl_robot,
+                  std::shared_ptr<DecompositionImpl> decomposition,
+                  const std::vector<int> &decomp_path,
                   dynobench::Trajectory &traj_out,
                   dynobench::Info_out &info_out);
 
@@ -123,6 +137,19 @@ void guided_idbrrt(const dynobench::Problem &problem,
             std::shared_ptr<dynobench::Model_robot> robot,
             const Options_dbrrt &options_dbrrt,
             const Options_trajopt &options_trajopt,
+            std::shared_ptr<Robot> ompl_robot,
+            std::shared_ptr<DecompositionImpl> decomposition,
+            const std::vector<int> &decomp_path,
             dynobench::Trajectory &traj_out, dynobench::Info_out &info_out);
+
+void sample_guided(Eigen::Ref<Eigen::VectorXd> x,
+            std::shared_ptr<DecompositionImpl> decomposition,
+            int rid);
+
+ob::State* eigen_to_ompl_state(const Eigen::Ref<const Eigen::VectorXd> x, std::shared_ptr<Robot> ompl_robot);
+
+int locate_region(const Eigen::Ref<const Eigen::VectorXd> x, std::shared_ptr<Robot> ompl_robot, std::shared_ptr<DecompositionImpl> decomposition);
+
+bool check_trajectory_valid(dynobench::TrajWrapper traj_wrapper, std::shared_ptr<Robot> ompl_robot, std::shared_ptr<DecompositionImpl> decomposition, std::vector<int> region_path, int region_idx);
 
 } // namespace dynoplan
