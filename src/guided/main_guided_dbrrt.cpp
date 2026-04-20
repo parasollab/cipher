@@ -3,6 +3,7 @@
 #include <memory>
 
 #include <boost/program_options.hpp>
+#include <ompl/util/RandomNumbers.h>
 
 #include <yaml-cpp/yaml.h>
 
@@ -47,25 +48,18 @@ static YAML::Node makeVec3(double x, double y, double z = 0.0)
 }
 
 
-namespace dynoplan {
-void guided_idbrrt(const dynobench::Problem &problem,
-                   std::shared_ptr<dynobench::Model_robot> robot,
-                   const Options_dbrrt &options_dbrrt,
-                   const Options_trajopt &options_trajopt,
-                   dynobench::Trajectory &traj_out,
-                   dynobench::Info_out &info_out);
-} // namespace dynoplan
-
 int main(int argc, char *argv[]) {
   Options_trajopt options_trajopt;
   Options_dbrrt options_dbrrt;
   po::options_description desc("Allowed options");
   std::string cfg_file, results_file, env_file, models_base_path, vizFile;
+  int seed_override = -1;
   set_from_boostop(desc, VAR_WITH_NAME(cfg_file));
   set_from_boostop(desc, VAR_WITH_NAME(results_file));
   set_from_boostop(desc, VAR_WITH_NAME(env_file));
   set_from_boostop(desc, VAR_WITH_NAME(models_base_path));
   desc.add_options()("vizFile,z", po::value<std::string>(&vizFile), "Visualization log output YAML file");
+  desc.add_options()("seed", po::value<int>(&seed_override), "Random seed for Options_dbrrt (overrides cfg_file)");
   options_trajopt.add_options(desc);
   options_dbrrt.add_options(desc);
 
@@ -86,6 +80,10 @@ int main(int argc, char *argv[]) {
   if (cfg_file != "") {
     options_dbrrt.read_from_yaml(cfg_file.c_str());
     options_trajopt.read_from_yaml(cfg_file.c_str());
+  }
+
+  if (seed_override >= 0) {
+    options_dbrrt.seed = seed_override;
   }
 
   Problem problem(env_file.c_str());
@@ -279,10 +277,10 @@ int main(int argc, char *argv[]) {
     std::cout << "[viz] mapf event written to " << vizFile << std::endl;
   }
 
-  // dynoplan::guided_idbrrt(problem, robot, options_dbrrt, options_trajopt, temp_robot,
-  //                         decomp, region_paths[0], traj, out_db);
-  dynoplan::guided_dbrrt(problem, robot, options_dbrrt, options_trajopt, temp_robot,
+  dynoplan::guided_idbrrt(problem, robot, options_dbrrt, options_trajopt, temp_robot,
                           decomp, region_paths[0], traj, out_db);
+  // dynoplan::guided_dbrrt(problem, robot, options_dbrrt, options_trajopt, temp_robot,
+  //                         decomp, region_paths[0], traj, out_db);
 
   std::cout << "guided_dbrrt returned with traj of size " << traj.states.size() << std::endl;
 
@@ -290,9 +288,11 @@ int main(int argc, char *argv[]) {
   out_db.to_yaml(std::cout);
   std::cout << "***" << std::endl;
 
-  if (do_viz) {
-    // auto trajectory = out_db.trajs_opt[0];
-    auto trajectory = traj;
+  std::cout << "Raw solved: " << out_db.solved_raw << std::endl;
+  std::cout << "Optimized solved: " << out_db.solved << std::endl;
+
+  if (do_viz && (out_db.solved || out_db.solved_raw)) {
+    auto trajectory = !out_db.trajs_opt.empty() ? out_db.trajs_opt[0] : traj;
     YAML::Node ev;
     ev["type"] = "low_level_paths";
     YAML::Node paths;
