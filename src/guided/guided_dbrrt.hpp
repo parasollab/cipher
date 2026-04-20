@@ -32,7 +32,7 @@ struct Options_dbrrt {
   double goal_region = .3;
   double cost_bound = 200;
   double goal_bias = 0.0;
-  bool debug = false;
+  bool debug = true;
   bool verbose = true; // print search progress and status messages
   bool new_invariance = true;
   double delta = .3;

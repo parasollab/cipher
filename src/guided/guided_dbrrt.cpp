@@ -1436,7 +1436,7 @@ void guided_dbrrt(const dynobench::Problem &problem,
             options_trajopt_used.region_bounds_weight = 50.0;
 
             for (int rid : decomp_path) {
-              const auto &rb = decomposition->getBoundsForRegion(rid);
+              auto rb = decomposition->getCellBounds(rid);
               Eigen::VectorXd lb(n_sp), ub(n_sp);
               for (size_t d = 0; d < n_sp; d++) {
                 lb[d] = rb.low[d];
@@ -1881,7 +1881,7 @@ void guided_idbrrt(const dynobench::Problem &problem,
           options_trajopt_used.region_bounds_weight = 50.0;
 
           for (int rid : decomp_path) {
-            const auto &rb = decomposition->getBoundsForRegion(rid);
+            auto rb = decomposition->getCellBounds(rid);
             Eigen::VectorXd lb(n_sp), ub(n_sp);
             for (size_t d = 0; d < n_sp; d++) {
               lb[d] = rb.low[d];
