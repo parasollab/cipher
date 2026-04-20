@@ -237,6 +237,10 @@ int main(int argc, char** argv)
         const auto& start_vec = robot_node["start"];
         std::vector<double> start_reals;
         for (const auto& v : start_vec) start_reals.push_back(v.as<double>());
+        // Pad with zeros if needed
+        while (start_reals.size() < robot_si->getStateSpace()->getDimension()) {
+            start_reals.push_back(0.0);
+        }
         auto* start_state = robot_si->getStateSpace()->allocState();
         robot_si->getStateSpace()->copyFromReals(start_state, start_reals);
         start_states.push_back(start_state);
@@ -244,6 +248,10 @@ int main(int argc, char** argv)
         const auto& goal_vec = robot_node["goal"];
         std::vector<double> goal_reals;
         for (const auto& v : goal_vec) goal_reals.push_back(v.as<double>());
+        // Pad with zeros if needed
+        while (goal_reals.size() < robot_si->getStateSpace()->getDimension()) {
+            goal_reals.push_back(0.0);
+        }
         auto* goal_state = robot_si->getStateSpace()->allocState();
         robot_si->getStateSpace()->copyFromReals(goal_state, goal_reals);
         goal_states.push_back(goal_state);
