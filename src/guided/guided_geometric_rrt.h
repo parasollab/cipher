@@ -34,7 +34,7 @@ public:
         std::cout << "[GuidedGeoRRT] solve() called" << std::endl;
         checkValidity();
         ob::Goal *goal = pdef_->getGoal().get();
-        // auto *goal_s = dynamic_cast<ob::GoalSampleableRegion *>(goal);
+        auto *goal_s = dynamic_cast<ob::GoalSampleableRegion *>(goal);
 
         while (const ob::State *st = pis_.nextStart())
         {
@@ -72,6 +72,7 @@ public:
         while (!ptc)
         {
             ++iteration;
+            bool sample_goal = false;
             // if (iteration % 500 == 1)
             //     std::cout << "[GuidedGeoRRT] iteration=" << iteration
             //               << " region_idx=" << region_idx
@@ -85,28 +86,40 @@ public:
             //     sampler_->sampleUniform(rstate);
 
             // Check if current region is sufficiently covered
+            // if (coverage_map[region_idx] > min_coverage) {
+            //     // std::cout << "[GuidedGeoRRT] region " << decomp_path[region_idx]
+            //     //           << " covered (count=" << coverage_map[region_idx]
+            //     //           << "), advancing to region_idx=" << region_idx + 1 << std::endl;
+            //     // Move to the next region in the path
+            //     region_idx++;
+            //     if (region_idx >= (int)decomp_path.size()) {
+            //         std::cout << "[GuidedGeoRRT] ERROR: region_idx=" << region_idx
+            //                   << " exceeds decomp_path size=" << decomp_path.size() << std::endl;
+            //         break;
+            //     }
+            // }
             if (coverage_map[region_idx] > min_coverage) {
-                // std::cout << "[GuidedGeoRRT] region " << decomp_path[region_idx]
-                //           << " covered (count=" << coverage_map[region_idx]
-                //           << "), advancing to region_idx=" << region_idx + 1 << std::endl;
-                // Move to the next region in the path
-                region_idx++;
-                if (region_idx >= (int)decomp_path.size()) {
-                    std::cout << "[GuidedGeoRRT] ERROR: region_idx=" << region_idx
-                              << " exceeds decomp_path size=" << decomp_path.size() << std::endl;
-                    break;
+                if (region_idx < (int)decomp_path.size()-1) {
+                    region_idx++;
+                } else {
+                    sample_goal = true;
                 }
             }
 
-            // Sample from the current region
-            // std::cout << "[GuidedGeoRRT] sampling from region " << decomp_path[region_idx]
-            //           << " (region_idx=" << region_idx << ")" << std::endl;
-            std::vector<double> coord(decomposition_->getDimension());
-            decomposition_->sampleFromRegion(decomp_path[region_idx], rng_, coord);
-            // std::cout << "[GuidedGeoRRT] sampled coord:";
-            // for (double v : coord) std::cout << " " << v;
-            // std::cout << std::endl;
-            decomposition_->sampleFullState(sampler_, coord, rstate);
+            if (sample_goal && (goal_s != nullptr) && goal_s->canSample()) {
+                goal_s->sampleGoal(rstate);
+            } else {
+                // Sample from the current region
+                // std::cout << "[GuidedGeoRRT] sampling from region " << decomp_path[region_idx]
+                //           << " (region_idx=" << region_idx << ")" << std::endl;
+                std::vector<double> coord(decomposition_->getDimension());
+                decomposition_->sampleFromRegion(decomp_path[region_idx], rng_, coord);
+                // std::cout << "[GuidedGeoRRT] sampled coord:";
+                // for (double v : coord) std::cout << " " << v;
+                // std::cout << std::endl;
+                decomposition_->sampleFullState(sampler_, coord, rstate);
+            }
+            
 
             // si_->copyFromReals(rstate, coord);
             // std::cout << "[GuidedGeoRRT] sampleFullState done, rstate=";
@@ -158,7 +171,7 @@ public:
                         // Check if state enters any other regions
                         int new_region_idx = decomposition_->locateRegion(motion->state);
                         // std::cout << "[GuidedGeoRRT] new_region_idx=" << new_region_idx << "!=" << decomp_path[region_idx] << std::endl;
-                        if (new_region_idx != decomp_path[region_idx]) {
+                        if ((region_idx > 0 && new_region_idx != decomp_path[region_idx - 1]) && new_region_idx != decomp_path[region_idx]) {
                             // Remove state from tree and continue
                             si_->freeState(motion->state);
                             delete motion;
@@ -181,7 +194,11 @@ public:
                         std::cout << "[GuidedGeoRRT] skipped " << skipped
                                   << " intermediate states (wrong region)" << std::endl;
                     else {
-                        coverage_map[region_idx] += 1;
+                        // coverage_map[region_idx] += 1;
+                        int end_region_idx = decomposition_->locateRegion(extension.back()->state);
+                        if (end_region_idx == decomp_path[region_idx]) {
+                            coverage_map[region_idx]++;
+                        }
 
                         for (std::size_t i = 0; i < extension.size(); ++i)
                         {

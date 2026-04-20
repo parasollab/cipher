@@ -22,6 +22,7 @@ import yaml
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 — registers 3D projection
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from matplotlib.patches import Polygon as MplPolygon
+from matplotlib.widgets import Slider
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -570,49 +571,86 @@ class Visualizer:
         dt_sim  = self.anim_speed / ANIM_FPS
 
         dim_str = '3D' if self.is_3d else '2D'
+
+        # Reserve bottom space for the scrub slider
+        self.fig.subplots_adjust(bottom=0.12)
+        ax_slider = self.fig.add_axes([0.1, 0.04, 0.8, 0.03])
+        slider = Slider(ax_slider, 'Time (s)', 0.0, total_time,
+                        valinit=0.0, color='steelblue')
+
         self._status_text(
-            f'[{dim_str}] Animating final paths — press any key to skip'
+            f'[{dim_str}] Animating — drag slider to scrub, any key to finish'
         )
         plt.draw()
 
         # Reset advance flag so a previous keypress doesn't skip immediately
         self._advance_flag = False
+        self._scrub_time = None
 
         robot_markers = {}
-        t = 0.0
 
-        while t <= total_time + dt_sim:
-            if not plt.fignum_exists(self.fig.number):
-                return
-            if self._advance_flag:
-                break
-
+        def draw_robots_at(t):
             for rid, path in self.low_level_paths.items():
                 pos = interpolate_position(path, min(t, path_duration(path)), self._n)
                 color = self.robot_colors.get(rid, 'gray')
-
                 if rid in robot_markers:
                     try:
                         robot_markers[rid].remove()
                     except Exception:
                         pass
-
                 kw = {'depthshade': False} if self.is_3d else {}
                 robot_markers[rid] = self._scatter_pt(
                     pos, c=[color], s=180, marker='o',
                     zorder=7, edgecolors='black', linewidths=1.5, **kw,
                 )
 
+        def on_slider_changed(val):
+            self._scrub_time = val
+            draw_robots_at(val)
+            self.fig.canvas.draw_idle()
+
+        slider.on_changed(on_slider_changed)
+
+        t = 0.0
+        while t <= total_time + dt_sim:
+            if not plt.fignum_exists(self.fig.number):
+                return
+            if self._advance_flag:
+                break
+
+            # Jump to scrubbed position if the user dragged the slider
+            if self._scrub_time is not None:
+                t = self._scrub_time
+                self._scrub_time = None
+
+            # Sync slider without re-triggering the callback
+            slider.eventson = False
+            slider.set_val(t)
+            slider.eventson = True
+
+            draw_robots_at(t)
             plt.draw()
             plt.pause(dt_real)
             t += dt_sim
 
-        # Remove animation markers, leave everything else visible
+        # Keep scrubber active until a key is pressed
+        self._advance_flag = False
+        self._status_text(
+            f'[{dim_str}] Drag slider to scrub — press any key to continue'
+        )
+        while not self._advance_flag:
+            if not plt.fignum_exists(self.fig.number):
+                return
+            plt.pause(0.05)
+
+        # Remove animation markers and slider, restore layout
         for marker in robot_markers.values():
             try:
                 marker.remove()
             except Exception:
                 pass
+        ax_slider.remove()
+        self.fig.subplots_adjust(bottom=0.05)
 
     # ------------------------------------------------------------------
     # Main loop
