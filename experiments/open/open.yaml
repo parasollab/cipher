@@ -1,4 +1,0 @@
-environment:
-  min: [0.0, 0.0]
-  max: [30.0, 30.0]
-  obstacles: []

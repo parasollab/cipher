@@ -15,7 +15,7 @@
 # ==============================================================================
 
 # Goal distance threshold - robots must reach within this distance of their goals
-goal_threshold: 0.5
+goal_threshold: 1.0
 
 # ==============================================================================
 # Subproblem Configuration
