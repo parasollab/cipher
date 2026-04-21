@@ -155,6 +155,7 @@ class Visualizer:
         self.robot_colors = {}
         self.cells = {}
         self.low_level_paths = {}
+        self.raw_paths = {}
         self.segments = {}
         self.coupled_groups = []
         self.mapf_paths = {}
@@ -347,6 +348,7 @@ class Visualizer:
                     pass
         self.cells = copy.deepcopy(self._initial_cells)
         self.low_level_paths = {}
+        self.raw_paths = {}
         self.segments = {}
         self.coupled_groups = []
         self.mapf_paths = {}
@@ -435,6 +437,22 @@ class Visualizer:
         self.artists['mapf_fills'] = fills
         self.artists['mapf_lines'] = lines
         self._draw_all_cells()
+
+    def handle_raw_trajectory(self, event):
+        self._clear_artists('raw_paths')
+        self.raw_paths = dict(event.get('paths', {}))
+        arts = []
+        for rid, path in self.raw_paths.items():
+            color = self.robot_colors.get(rid, 'gray')
+            if not path:
+                continue
+            pts = np.array([self._pos(s['state']) for s in path])
+            if len(pts) >= 2:
+                arts.append(self._plot_path(pts, color=color, lw=1.8,
+                                            alpha=0.45, linestyle='--',
+                                            label=f'{rid} (raw)'))
+        self.artists['raw_paths'] = arts
+        self._draw_starts_goals()
 
     def handle_low_level_paths(self, event):
         """'control' field is present in the log but ignored by the visualizer."""
@@ -556,12 +574,13 @@ class Visualizer:
     # ------------------------------------------------------------------
 
     def _animate_final_paths(self):
-        """Animate robots as moving dots along their current low-level paths."""
-        if not self.low_level_paths:
+        """Animate robots as moving dots along their current low-level paths (or raw if no opt)."""
+        paths_to_animate = self.low_level_paths or self.raw_paths
+        if not paths_to_animate:
             return
 
         total_time = max(
-            (path_duration(p) for p in self.low_level_paths.values() if p),
+            (path_duration(p) for p in paths_to_animate.values() if p),
             default=0.0,
         )
         if total_time <= 0:
@@ -590,7 +609,7 @@ class Visualizer:
         robot_markers = {}
 
         def draw_robots_at(t):
-            for rid, path in self.low_level_paths.items():
+            for rid, path in paths_to_animate.items():
                 pos = interpolate_position(path, min(t, path_duration(path)), self._n)
                 color = self.robot_colors.get(rid, 'gray')
                 if rid in robot_markers:
@@ -662,6 +681,7 @@ class Visualizer:
 
         handlers = {
             'mapf':             self.handle_mapf,
+            'raw_trajectory':   self.handle_raw_trajectory,
             'low_level_paths':  self.handle_low_level_paths,
             'segments':         self.handle_segments,
             'collision':        self.handle_collision,

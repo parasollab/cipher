@@ -53,13 +53,11 @@ int main(int argc, char *argv[]) {
   Options_dbrrt options_dbrrt;
   po::options_description desc("Allowed options");
   std::string cfg_file, results_file, env_file, models_base_path, vizFile;
-  int seed_override = -1;
   set_from_boostop(desc, VAR_WITH_NAME(cfg_file));
   set_from_boostop(desc, VAR_WITH_NAME(results_file));
   set_from_boostop(desc, VAR_WITH_NAME(env_file));
   set_from_boostop(desc, VAR_WITH_NAME(models_base_path));
   desc.add_options()("vizFile,z", po::value<std::string>(&vizFile), "Visualization log output YAML file");
-  desc.add_options()("seed", po::value<int>(&seed_override), "Random seed for Options_dbrrt (overrides cfg_file)");
   options_trajopt.add_options(desc);
   options_dbrrt.add_options(desc);
 
@@ -80,10 +78,6 @@ int main(int argc, char *argv[]) {
   if (cfg_file != "") {
     options_dbrrt.read_from_yaml(cfg_file.c_str());
     options_trajopt.read_from_yaml(cfg_file.c_str());
-  }
-
-  if (seed_override >= 0) {
-    options_dbrrt.seed = seed_override;
   }
 
   Problem problem(env_file.c_str());
@@ -291,42 +285,54 @@ int main(int argc, char *argv[]) {
   std::cout << "Raw solved: " << out_db.solved_raw << std::endl;
   std::cout << "Optimized solved: " << out_db.solved << std::endl;
 
-  if (do_viz && (out_db.solved || out_db.solved_raw)) {
-    auto trajectory = !out_db.trajs_opt.empty() ? out_db.trajs_opt[0] : traj;
-    YAML::Node ev;
-    ev["type"] = "low_level_paths";
-    YAML::Node paths;
+  auto make_waypoints = [](const dynobench::Trajectory& tr) {
     YAML::Node waypoints;
-    const size_t n = trajectory.states.size();
+    const size_t n = tr.states.size();
     for (size_t i = 0; i < n; ++i) {
       YAML::Node wp;
       YAML::Node state_node;
-      for (int k = 0; k < trajectory.states[i].size(); ++k)
-        state_node.push_back(trajectory.states[i][k]);
-      while ((int)state_node.size() < 3) state_node.push_back(0.0); // pad to 3D for visualizer
+      for (int k = 0; k < tr.states[i].size(); ++k)
+        state_node.push_back(tr.states[i][k]);
+      while ((int)state_node.size() < 3) state_node.push_back(0.0);
       wp["state"] = state_node;
-
       YAML::Node ctrl;
-      if (i < trajectory.actions.size()) {
-        for (int k = 0; k < trajectory.actions[i].size(); ++k)
-          ctrl.push_back(trajectory.actions[i][k]);
+      if (i < tr.actions.size()) {
+        for (int k = 0; k < tr.actions[i].size(); ++k)
+          ctrl.push_back(tr.actions[i][k]);
       } else {
         ctrl.push_back(0.0); ctrl.push_back(0.0);
       }
       wp["control"] = ctrl;
-
       double dur = 0.0;
       if (i + 1 < n)
-        dur = (trajectory.times.size() > 0) ? trajectory.times[i + 1] - trajectory.times[i] : 0.1;
+        dur = (tr.times.size() > 0) ? tr.times[i + 1] - tr.times[i] : 0.1;
       wp["duration"] = dur;
-
       waypoints.push_back(wp);
     }
-    paths["r0"] = waypoints;
+    return waypoints;
+  };
+
+  if (do_viz && out_db.solved_raw) {
+    const auto& raw_traj = !out_db.trajs_raw.empty() ? out_db.trajs_raw[0] : traj;
+    YAML::Node ev;
+    ev["type"] = "raw_trajectory";
+    YAML::Node paths;
+    paths["r0"] = make_waypoints(raw_traj);
     ev["paths"] = paths;
     viz_events.push_back(ev);
     vizWriteFile(vizFile, viz_header, viz_events);
-    std::cout << "[viz] low_level_paths event for robot 0 written to " << vizFile << std::endl;
+    std::cout << "[viz] raw_trajectory event written to " << vizFile << std::endl;
+  }
+
+  if (do_viz && out_db.solved) {
+    YAML::Node ev;
+    ev["type"] = "low_level_paths";
+    YAML::Node paths;
+    paths["r0"] = make_waypoints(out_db.trajs_opt[0]);
+    ev["paths"] = paths;
+    viz_events.push_back(ev);
+    vizWriteFile(vizFile, viz_header, viz_events);
+    std::cout << "[viz] low_level_paths event (optimized) written to " << vizFile << std::endl;
   }
 
   CSTR_(results_file);

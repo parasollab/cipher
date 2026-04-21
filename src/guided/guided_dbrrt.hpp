@@ -20,7 +20,7 @@ struct Options_dbrrt {
   double prob_expand_forward = 0.5;
   bool extract_primitives = false;
   bool add_to_search_tree = false;
-  bool do_optimization = true;
+  bool do_optimization = false;
   int seed = -1;
   double cost_jump = 1;
   double best_cost_prune_factor = .9;
