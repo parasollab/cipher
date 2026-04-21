@@ -3,6 +3,7 @@
 #include <memory>
 
 #include <boost/program_options.hpp>
+#include <ompl/util/RandomNumbers.h>
 
 #include <yaml-cpp/yaml.h>
 
@@ -46,15 +47,6 @@ static YAML::Node makeVec3(double x, double y, double z = 0.0)
     return n;
 }
 
-
-namespace dynoplan {
-void guided_idbrrt(const dynobench::Problem &problem,
-                   std::shared_ptr<dynobench::Model_robot> robot,
-                   const Options_dbrrt &options_dbrrt,
-                   const Options_trajopt &options_trajopt,
-                   dynobench::Trajectory &traj_out,
-                   dynobench::Info_out &info_out);
-} // namespace dynoplan
 
 int main(int argc, char *argv[]) {
   Options_trajopt options_trajopt;
@@ -279,10 +271,10 @@ int main(int argc, char *argv[]) {
     std::cout << "[viz] mapf event written to " << vizFile << std::endl;
   }
 
-  // dynoplan::guided_idbrrt(problem, robot, options_dbrrt, options_trajopt, temp_robot,
-  //                         decomp, region_paths[0], traj, out_db);
-  dynoplan::guided_dbrrt(problem, robot, options_dbrrt, options_trajopt, temp_robot,
+  dynoplan::guided_idbrrt(problem, robot, options_dbrrt, options_trajopt, temp_robot,
                           decomp, region_paths[0], traj, out_db);
+  // dynoplan::guided_dbrrt(problem, robot, options_dbrrt, options_trajopt, temp_robot,
+  //                         decomp, region_paths[0], traj, out_db);
 
   std::cout << "guided_dbrrt returned with traj of size " << traj.states.size() << std::endl;
 
@@ -290,43 +282,57 @@ int main(int argc, char *argv[]) {
   out_db.to_yaml(std::cout);
   std::cout << "***" << std::endl;
 
-  if (do_viz) {
-    // auto trajectory = out_db.trajs_opt[0];
-    auto trajectory = traj;
-    YAML::Node ev;
-    ev["type"] = "low_level_paths";
-    YAML::Node paths;
+  std::cout << "Raw solved: " << out_db.solved_raw << std::endl;
+  std::cout << "Optimized solved: " << out_db.solved << std::endl;
+
+  auto make_waypoints = [](const dynobench::Trajectory& tr) {
     YAML::Node waypoints;
-    const size_t n = trajectory.states.size();
+    const size_t n = tr.states.size();
     for (size_t i = 0; i < n; ++i) {
       YAML::Node wp;
       YAML::Node state_node;
-      for (int k = 0; k < trajectory.states[i].size(); ++k)
-        state_node.push_back(trajectory.states[i][k]);
-      while ((int)state_node.size() < 3) state_node.push_back(0.0); // pad to 3D for visualizer
+      for (int k = 0; k < tr.states[i].size(); ++k)
+        state_node.push_back(tr.states[i][k]);
+      while ((int)state_node.size() < 3) state_node.push_back(0.0);
       wp["state"] = state_node;
-
       YAML::Node ctrl;
-      if (i < trajectory.actions.size()) {
-        for (int k = 0; k < trajectory.actions[i].size(); ++k)
-          ctrl.push_back(trajectory.actions[i][k]);
+      if (i < tr.actions.size()) {
+        for (int k = 0; k < tr.actions[i].size(); ++k)
+          ctrl.push_back(tr.actions[i][k]);
       } else {
         ctrl.push_back(0.0); ctrl.push_back(0.0);
       }
       wp["control"] = ctrl;
-
       double dur = 0.0;
       if (i + 1 < n)
-        dur = (trajectory.times.size() > 0) ? trajectory.times[i + 1] - trajectory.times[i] : 0.1;
+        dur = (tr.times.size() > 0) ? tr.times[i + 1] - tr.times[i] : 0.1;
       wp["duration"] = dur;
-
       waypoints.push_back(wp);
     }
-    paths["r0"] = waypoints;
+    return waypoints;
+  };
+
+  if (do_viz && out_db.solved_raw) {
+    const auto& raw_traj = !out_db.trajs_raw.empty() ? out_db.trajs_raw[0] : traj;
+    YAML::Node ev;
+    ev["type"] = "raw_trajectory";
+    YAML::Node paths;
+    paths["r0"] = make_waypoints(raw_traj);
     ev["paths"] = paths;
     viz_events.push_back(ev);
     vizWriteFile(vizFile, viz_header, viz_events);
-    std::cout << "[viz] low_level_paths event for robot 0 written to " << vizFile << std::endl;
+    std::cout << "[viz] raw_trajectory event written to " << vizFile << std::endl;
+  }
+
+  if (do_viz && out_db.solved) {
+    YAML::Node ev;
+    ev["type"] = "low_level_paths";
+    YAML::Node paths;
+    paths["r0"] = make_waypoints(out_db.trajs_opt[0]);
+    ev["paths"] = paths;
+    viz_events.push_back(ev);
+    vizWriteFile(vizFile, viz_header, viz_events);
+    std::cout << "[viz] low_level_paths event (optimized) written to " << vizFile << std::endl;
   }
 
   CSTR_(results_file);

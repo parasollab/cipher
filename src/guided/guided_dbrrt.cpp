@@ -1429,8 +1429,25 @@ void guided_dbrrt(const dynobench::Problem &problem,
           dynobench::Trajectory traj_opt;
           Result_opti result;
 
+          Options_trajopt options_trajopt_used = options_trajopt;
+
+          if (decomposition && !decomp_path.empty()) {
+            size_t n_sp = static_cast<size_t>(decomposition->getDimension());
+            options_trajopt_used.region_bounds_weight = 50.0;
+
+            for (int rid : decomp_path) {
+              auto rb = decomposition->getCellBounds(rid);
+              Eigen::VectorXd lb(n_sp), ub(n_sp);
+              for (size_t d = 0; d < n_sp; d++) {
+                lb[d] = rb.low[d];
+                ub[d] = rb.high[d];
+              }
+              options_trajopt_used.region_bounds.push_back({lb, ub});
+            }
+          }
+
           Stopwatch sw_opti;
-          trajectory_optimization(problem, traj_db, options_trajopt, traj_opt,
+          trajectory_optimization(problem, traj_db, options_trajopt_used, traj_opt,
                                   result);
           double time_ddp_total = std::stof(result.data.at("time_ddp_total"));
           info_out.infos_opt.push_back(result.data);
@@ -1856,7 +1873,25 @@ void guided_idbrrt(const dynobench::Problem &problem,
       if (info_out_local.solved_raw) {
         Result_opti result;
         dynobench::Trajectory traj_out_opti;
-        trajectory_optimization(problem, traj_dbrrt, options_trajopt,
+
+        Options_trajopt options_trajopt_used = options_trajopt;
+
+        if (decomposition && !decomp_path.empty()) {
+          size_t n_sp = static_cast<size_t>(decomposition->getDimension());
+          options_trajopt_used.region_bounds_weight = 50.0;
+
+          for (int rid : decomp_path) {
+            auto rb = decomposition->getCellBounds(rid);
+            Eigen::VectorXd lb(n_sp), ub(n_sp);
+            for (size_t d = 0; d < n_sp; d++) {
+              lb[d] = rb.low[d];
+              ub[d] = rb.high[d];
+            }
+            options_trajopt_used.region_bounds.push_back({lb, ub});
+          }
+        }
+
+        trajectory_optimization(problem, traj_dbrrt, options_trajopt_used,
                                 traj_out_opti, result);
         accumulated_time_filtered +=
             std::stof(result.data.at("time_ddp_total"));
