@@ -29,12 +29,26 @@ include_directories(
 add_executable(geometric_cipher
   src/geometric/cipher.cpp
   src/utils/grid_decomposition.cpp
+  src/mapf/cbs.cpp
+  db-CBS/src/robots.cpp
 )
 target_include_directories(geometric_cipher PRIVATE
+  ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}
   ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
   ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_SOURCE_DIR}/db-CBS/src
+  ${YAML_INCLUDE_DIRS}
+  ${FCL_INCLUDE_DIRS}
 )
-target_link_libraries(geometric_cipher PRIVATE ompl Eigen3::Eigen Boost::headers)
+target_link_directories(geometric_cipher PRIVATE ${YAML_LIBRARY_DIRS})
+target_link_libraries(geometric_cipher PRIVATE
+  ompl
+  Eigen3::Eigen
+  Boost::program_options
+  ${YAML_LIBRARIES}
+  ${FCL_LIBRARIES}
+)
 
 add_executable(geometric_decoupled_rrt
   src/geometric/decoupled_rrt.cpp
