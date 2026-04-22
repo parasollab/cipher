@@ -297,7 +297,7 @@ private:
     bool isTimeoutExceeded() const;
 
     // Collision manager for obstacles (shared with guided planners)
-    std::shared_ptr<fcl::BroadPhaseCollisionManagerf> conflict_manager_;
+    std::shared_ptr<fcl::BroadPhaseCollisionManagerf> collision_manager_;
 
     // Hierarchical decomposition tracking
     std::vector<DecompositionCell> decomposition_hierarchy_;  // One cell per initial region

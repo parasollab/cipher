@@ -8,6 +8,13 @@
 #include <yaml-cpp/yaml.h>
 
 #include "cipher.h"
+#include "fclStateValidityChecker.hpp"
+#include "robots.h"
+
+#include "utils/decomposition.h"
+#include "utils/grid_decomposition.h"
+#include "guided/guided_geometric_rrt.h"
+#include "mapf/cbs.h"
 
 namespace po = boost::program_options;
 
@@ -49,9 +56,9 @@ void CipherGeometricPlanner::loadProblem(
     workspace_bounds_.setHigh(1, env_max[1]);
 
     // Setup decomposition, collision manager, and robots
-    setupDecomposition();
-    setupCollisionManager();
     setupRobots();
+    setupCollisionManager();
+    setupDecomposition();
 
     problem_loaded_ = true;
 }
@@ -154,14 +161,49 @@ bool CipherGeometricPlanner::resolveConflicts() {
 // Private helpers
 void CipherGeometricPlanner::setupDecomposition() {
     std::cout << "Setting up decomposition..." << std::endl;
+    auto decomp = new GridDecompositionImpl(2, workspace_bounds_, config_.decomposition_region_length);
+    decomp->setStateSpace(robots_[0]->getSpaceInformation()->getStateSpace());
+    decomp_ = decomp;
 }
 
 void CipherGeometricPlanner::setupCollisionManager() {
     std::cout << "Setting up conflict manager..." << std::endl;
+    collision_manager_ = std::make_shared<fcl::DynamicAABBTreeCollisionManagerf>();
+    collision_manager_->registerObjects(obstacles_);
+    collision_manager_->setup();
 }
 
 void CipherGeometricPlanner::setupRobots() {
     std::cout << "Setting up robots..." << std::endl;
+    ob::RealVectorBounds position_bounds(env_min_.size());
+    for (size_t i = 0; i < env_min_.size(); ++i) {
+        position_bounds.setLow(i, env_min_[i]);
+        position_bounds.setHigh(i, env_max_[i]);
+    }
+
+    for (size_t i = 0; i < robot_types_.size(); ++i) {
+        // Create robot
+        auto robot = create_robot(robot_types_[i], position_bounds);
+        auto state_space = robot->getSpaceInformation()->getStateSpace();
+        state_space->setName("Robot " + std::to_string(i));
+        auto si = std::make_shared<ob::SpaceInformation>(state_space);
+
+        si->setStateValidityChecker(
+            std::make_shared<fclStateValidityChecker>(si, collision_manager_, robot));
+
+        si->setup();
+        robots_.push_back(robot);
+
+        // Create start state
+        ob::State* start = si->getStateSpace()->allocState();
+        si->getStateSpace()->copyFromReals(start, starts_[i]);
+        start_states_.push_back(start);
+
+        // Create goal state
+        ob::State* goal = si->getStateSpace()->allocState();
+        si->getStateSpace()->copyFromReals(goal, goals_[i]);
+        goal_states_.push_back(goal);
+    }
 }
 
 void CipherGeometricPlanner::cleanup() {
