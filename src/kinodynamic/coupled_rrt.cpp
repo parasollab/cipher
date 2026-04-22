@@ -210,8 +210,8 @@ KinoCoupledRRTConfig loadConfigFromYAML(const std::string& configFile)
 
     try {
         YAML::Node cfg = YAML::LoadFile(configFile);
-        if (cfg["time_limit"]) {
-            config.time_limit = cfg["time_limit"].as<double>();
+        if (cfg["timelimit"]) {
+            config.time_limit = cfg["timelimit"].as<double>();
         }
         if (cfg["goal_threshold"]) {
             config.goal_threshold = cfg["goal_threshold"].as<double>();
