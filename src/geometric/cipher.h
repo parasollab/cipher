@@ -30,6 +30,7 @@ struct MAPFConfig {
     std::string method = "cbs";  // Options: "decoupled", "astar", "cbs"
     int region_capacity = 1;           // Robots per vertex/edge (for CBS)
     double max_obstacle_volume_percent = 0.5;  // Maximum obstacle volume in a region (0.0 to 1.0)
+    double mapf_timeout = 30.0;          // Timeout for MAPF solver in seconds
 };
 
 struct ConflictResolutionConfig {
@@ -54,7 +55,7 @@ struct ConflictResolutionConfig {
 };
 
 struct CipherGeometricConfig {
-    int decomposition_region_length = 1;
+    int decomposition_region_length = 5.0;
     std::vector<int> decomposition_resolution = {10, 10, 1};  // Grid cells in [x, y, z]
     double planning_time_limit = 60.0;
     double max_total_time = 0.0;  // Maximum total planning time in seconds (0 = no limit)
@@ -258,7 +259,7 @@ public:
 
     // Accessors
     const std::vector<std::vector<int>>& getHighLevelPaths() const { return high_level_paths_; }
-    const DecompositionImpl* getDecomposition() const { return decomp_; }
+    const std::shared_ptr<DecompositionImpl> getDecomposition() const { return decomp_; }
     const std::vector<og::PathGeometric>& getGuidedPaths() const { return guided_planning_results_; }
     const std::vector<std::vector<PathSegment>>& getPathSegments() const { return path_segments_; }
     const std::vector<std::shared_ptr<Robot>>& getRobots() const { return robots_; }
@@ -273,7 +274,7 @@ private:
     std::vector<double> env_min_;
     std::vector<double> env_max_;
     ob::RealVectorBounds workspace_bounds_;
-    DecompositionImpl* decomp_;
+    std::shared_ptr<DecompositionImpl> decomp_;
 
     // Robot data
     std::vector<std::shared_ptr<Robot>> robots_;
@@ -422,6 +423,17 @@ private:
     void recordRefinement(int parent_region, const DecompositionImpl* local_decomp);
     YAML::Node serializeDecompositionHierarchy() const;
     YAML::Node serializeCellRecursive(const DecompositionCell& cell) const;
+
+    // Visualization
+    bool do_viz_ = false;
+    std::string viz_file_;
+    YAML::Node viz_header_;
+    std::vector<YAML::Node> viz_events_;
+    void initVizHeader();
+    void vizWriteFile() const;
+
+public:
+    void setVizFile(const std::string& path) { viz_file_ = path; do_viz_ = !path.empty(); }
 };
 
 #endif //CIPHER_GEOMETRIC_H

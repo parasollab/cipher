@@ -18,6 +18,75 @@
 
 namespace po = boost::program_options;
 
+// ---------------------------------------------------------------------------
+// Visualization helpers
+// ---------------------------------------------------------------------------
+static YAML::Node makeVec3(double x, double y, double z = 0.0)
+{
+    YAML::Node n;
+    n.push_back(x); n.push_back(y); n.push_back(z);
+    return n;
+}
+
+void CipherGeometricPlanner::vizWriteFile() const
+{
+    YAML::Node doc;
+    doc["header"] = viz_header_;
+    YAML::Node evs;
+    for (const auto& e : viz_events_) evs.push_back(e);
+    doc["events"] = evs;
+    std::ofstream fout(viz_file_);
+    fout << doc;
+}
+
+void CipherGeometricPlanner::initVizHeader()
+{
+    if (!do_viz_) return;
+
+    viz_header_["dimensions"] = 2;
+
+    // Robots
+    YAML::Node viz_robots;
+    for (size_t r = 0; r < robots_.size(); ++r) {
+        auto si = robots_[r]->getSpaceInformation();
+        std::vector<double> s_reals, g_reals;
+        si->getStateSpace()->copyToReals(s_reals, start_states_[r]);
+        si->getStateSpace()->copyToReals(g_reals, goal_states_[r]);
+
+        YAML::Node rn;
+        rn["id"] = "r" + std::to_string(r);
+        rn["dynamics"] = robot_types_[r];
+        YAML::Node geom;
+        geom["type"] = "sphere";
+        geom["radius"] = 0.15;
+        rn["geometry"] = geom;
+        rn["start"] = makeVec3(s_reals[0], s_reals[1]);
+        rn["goal"]  = makeVec3(g_reals[0], g_reals[1]);
+        viz_robots.push_back(rn);
+    }
+    viz_header_["robots"] = viz_robots;
+
+    // Grid cells
+    YAML::Node viz_grid;
+    YAML::Node viz_cells;
+    const int num_regions = decomp_->getNumRegions();
+    for (int rid = 0; rid < num_regions; ++rid) {
+        const auto& rb = decomp_->getCellBounds(rid);
+        YAML::Node cn;
+        cn["id"] = "c" + std::to_string(rid);
+        YAML::Node bounds;
+        bounds["min"] = makeVec3(rb.low[0], rb.low[1]);
+        bounds["max"] = makeVec3(rb.high[0], rb.high[1]);
+        cn["bounds"] = bounds;
+        viz_cells.push_back(cn);
+    }
+    viz_grid["cells"] = viz_cells;
+    viz_header_["grid"] = viz_grid;
+
+    vizWriteFile();
+    std::cout << "[viz] Header written (" << num_regions << " cells) to " << viz_file_ << std::endl;
+}
+
 CipherGeometricPlanner::CipherGeometricPlanner(const CipherGeometricConfig& config)
     : config_(config), decomp_(nullptr), workspace_bounds_(3) {
 }
@@ -60,6 +129,9 @@ void CipherGeometricPlanner::loadProblem(
     setupCollisionManager();
     setupDecomposition();
 
+    // Build and write visualization header now that robots + decomp are ready
+    initVizHeader();
+
     problem_loaded_ = true;
 }
 
@@ -89,7 +161,6 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
             result.resolution_stats = resolution_stats_;
             return result;
         }
-
 
         // Phase 2: Compute guided paths for each robot
         std::cout << "[Phase 2] Computing guided paths..." << std::endl;
@@ -138,10 +209,73 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
 
 void CipherGeometricPlanner::computeHighLevelPaths() {
     std::cout << "Computing high-level paths..." << std::endl;
+    CBS cbs_solver(config_.mapf_config.region_capacity, config_.mapf_config.mapf_timeout,
+                    obstacles_, config_.mapf_config.max_obstacle_volume_percent);
+    high_level_paths_ = cbs_solver.solve(decomp_, start_states_, goal_states_);
+
+    if (static_cast<int>(high_level_paths_.size()) < start_states_.size()) {
+        std::cerr << "CBS failed to find paths for all robots." << std::endl;
+    }
+    for (int r = 0; r < (int)start_states_.size(); ++r) {
+        if (high_level_paths_[r].empty()) {
+            std::cerr << "CBS returned empty path for robot " << r << std::endl;
+        }
+        std::cout << "  Robot " << r << " CBS path: "
+                  << high_level_paths_[r].size() << " regions" << std::endl;
+    }
+
+    if (do_viz_) {
+        YAML::Node ev;
+        ev["type"] = "mapf";
+        YAML::Node paths;
+        for (int r = 0; r < (int)high_level_paths_.size(); ++r) {
+            YAML::Node cell_ids;
+            for (int rid : high_level_paths_[r])
+                cell_ids.push_back("c" + std::to_string(rid));
+            paths["r" + std::to_string(r)] = cell_ids;
+        }
+        ev["paths"] = paths;
+        viz_events_.push_back(ev);
+        vizWriteFile();
+        std::cout << "[viz] mapf event written to " << viz_file_ << std::endl;
+    }
 }
 
 void CipherGeometricPlanner::computeGuidedPaths() {
     std::cout << "Computing guided paths..." << std::endl;
+    // TODO: plan each robot with GuidedGeometricRRT and populate guided_planning_results_
+
+    // Emit low_level_paths event per robot once paths are available
+    if (do_viz_ && !guided_planning_results_.empty()) {
+        for (int r = 0; r < (int)guided_planning_results_.size(); ++r) {
+            auto si = robots_[r]->getSpaceInformation();
+            const auto& path = guided_planning_results_[r];
+            YAML::Node ev;
+            ev["type"] = "low_level_paths";
+            YAML::Node paths;
+            YAML::Node waypoints;
+            const size_t n = path.getStateCount();
+            for (size_t i = 0; i < n; ++i) {
+                std::vector<double> reals;
+                si->getStateSpace()->copyToReals(reals, path.getState(i));
+                YAML::Node wp;
+                YAML::Node state_node;
+                for (double v : reals) state_node.push_back(v);
+                while ((int)state_node.size() < 3) state_node.push_back(0.0);
+                wp["state"] = state_node;
+                YAML::Node ctrl; ctrl.push_back(0.0); ctrl.push_back(0.0);
+                wp["control"] = ctrl;
+                wp["duration"] = (i + 1 < n) ? 0.1 : 0.0;
+                waypoints.push_back(wp);
+            }
+            paths["r" + std::to_string(r)] = waypoints;
+            ev["paths"] = paths;
+            viz_events_.push_back(ev);
+            vizWriteFile();
+            std::cout << "[viz] low_level_paths event for robot " << r
+                      << " written to " << viz_file_ << std::endl;
+        }
+    }
 }
 
 void CipherGeometricPlanner::segmentGuidedPaths() {
@@ -161,7 +295,8 @@ bool CipherGeometricPlanner::resolveConflicts() {
 // Private helpers
 void CipherGeometricPlanner::setupDecomposition() {
     std::cout << "Setting up decomposition..." << std::endl;
-    auto decomp = new GridDecompositionImpl(2, workspace_bounds_, config_.decomposition_region_length);
+    /// TODO: We need to remove the hardcoded 2D assumption. Need a way to get the dimension of the workspace.
+    auto decomp = std::make_shared<GridDecompositionImpl>(2, workspace_bounds_, config_.decomposition_region_length);
     decomp->setStateSpace(robots_[0]->getSpaceInformation()->getStateSpace());
     decomp_ = decomp;
 }
@@ -405,13 +540,15 @@ int main(int argc, char** argv)
     std::string inputFile;
     std::string outputFile;
     std::string configFile;
+    std::string vizFile;
 
     po::options_description desc("Allowed options");
     desc.add_options()
         ("help,h", "Show help message")
         ("input,i", po::value<std::string>(&inputFile)->required(), "Input YAML file")
         ("output,o", po::value<std::string>(&outputFile)->required(), "Output YAML file")
-        ("cfg,c", po::value<std::string>(&configFile), "Configuration YAML file");
+        ("cfg,c", po::value<std::string>(&configFile), "Configuration YAML file")
+        ("viz,v", po::value<std::string>(&vizFile), "Visualization log output YAML file");
 
     po::variables_map vm;
     try {
@@ -500,6 +637,7 @@ int main(int argc, char** argv)
     std::cout << "Planning for " << robot_types.size() << " robots" << std::endl;
 
     CipherGeometricPlanner planner(config);
+    if (!vizFile.empty()) planner.setVizFile(vizFile);
     planner.loadProblem(robot_types, starts, goals, obstacles, env_min, env_max);
     CipherGeometricResult result = planner.plan();
 
