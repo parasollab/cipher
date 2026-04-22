@@ -125,8 +125,8 @@ void CipherGeometricPlanner::loadProblem(
     workspace_bounds_.setHigh(1, env_max[1]);
 
     // Setup decomposition, collision manager, and robots
-    setupRobots();
     setupCollisionManager();
+    setupRobots();
     setupDecomposition();
 
     // Build and write visualization header now that robots + decomp are ready
@@ -243,21 +243,74 @@ void CipherGeometricPlanner::computeHighLevelPaths() {
 
 void CipherGeometricPlanner::computeGuidedPaths() {
     std::cout << "Computing guided paths..." << std::endl;
-    // TODO: plan each robot with GuidedGeometricRRT and populate guided_planning_results_
+
+    if (!problem_loaded_) {
+        throw std::runtime_error("Problem not loaded. Call loadProblem() first.");
+    }
+
+    if (high_level_paths_.empty()) {
+        throw std::runtime_error(
+            "High-level paths not computed. Call computeHighLevelPaths() first.");
+    }
+
+    // Clear any existing guided planning results
+    guided_planning_results_.clear();
+
+    for (size_t robot_idx = 0; robot_idx < robots_.size(); ++robot_idx) {
+        auto robot_si = robot_sis_[robot_idx];
+
+        guided_planning_results_.push_back(GuidedPlanningResult());
+
+        guided_planning_results_[robot_idx].robot_index = robot_idx;
+
+        auto pdef = std::make_shared<ob::ProblemDefinition>(robot_si);
+        pdef->addStartState(start_states_[robot_idx]);
+        pdef->setGoal(std::make_shared<PositionGoalCondition>(
+            robot_si, goal_states_[robot_idx], config_.goal_threshold));
+        
+        // Create guided planner instance
+        auto planner = std::make_shared<GuidedGeometricRRT>(robot_si);
+        planner->setIntermediateStates(true);
+        planner->setDecomposition(decomp_);
+        planner->setDecompositionPath(high_level_paths_[robot_idx]);
+        planner->setProblemDefinition(pdef);
+        planner->setup();
+
+        ob::PlannerStatus status = planner->solve(
+            ob::timedPlannerTerminationCondition(config_.planning_time_limit));
+        
+        if (status == ob::PlannerStatus::EXACT_SOLUTION ||
+            status == ob::PlannerStatus::APPROXIMATE_SOLUTION) {
+            auto path = pdef->getSolutionPath()->as<og::PathGeometric>();
+            path->interpolate();
+
+            guided_planning_results_[robot_idx].success = true;
+            // guided_planning_results_[robot_idx].planning_time = ;
+            guided_planning_results_[robot_idx].path = std::make_shared<og::PathGeometric>(*path);
+            std::cout << "  Robot " << robot_idx << ": solved with "
+                      << guided_planning_results_[robot_idx].path->getStateCount() << " states" << std::endl;
+        }
+        else {
+            guided_planning_results_[robot_idx].success = false;
+            std::cout << "  Robot " << robot_idx << ": FAILED" << std::endl;
+        }
+    }
+
+    std::cout << "Guided planner results: " << guided_planning_results_.size() << std::endl;
 
     // Emit low_level_paths event per robot once paths are available
     if (do_viz_ && !guided_planning_results_.empty()) {
         for (int r = 0; r < (int)guided_planning_results_.size(); ++r) {
-            auto si = robots_[r]->getSpaceInformation();
-            const auto& path = guided_planning_results_[r];
+            auto si = robot_sis_[r];
+            const auto& path = guided_planning_results_[r].path;
             YAML::Node ev;
             ev["type"] = "low_level_paths";
             YAML::Node paths;
             YAML::Node waypoints;
-            const size_t n = path.getStateCount();
+            const size_t n = path->getStateCount();
             for (size_t i = 0; i < n; ++i) {
                 std::vector<double> reals;
-                si->getStateSpace()->copyToReals(reals, path.getState(i));
+                si->getStateSpace()->copyToReals(reals, path->getState(i));
                 YAML::Node wp;
                 YAML::Node state_node;
                 for (double v : reals) state_node.push_back(v);
@@ -325,9 +378,10 @@ void CipherGeometricPlanner::setupRobots() {
 
         si->setStateValidityChecker(
             std::make_shared<fclStateValidityChecker>(si, collision_manager_, robot));
-
         si->setup();
+
         robots_.push_back(robot);
+        robot_sis_.push_back(si);
 
         // Create start state
         ob::State* start = si->getStateSpace()->allocState();
@@ -338,6 +392,12 @@ void CipherGeometricPlanner::setupRobots() {
         ob::State* goal = si->getStateSpace()->allocState();
         si->getStateSpace()->copyFromReals(goal, goals_[i]);
         goal_states_.push_back(goal);
+
+        GuidedPlanningResult result;
+        result.robot_index = i;
+        result.planning_time = 0.0;
+        result.success = false;
+        guided_planning_results_.push_back(result);
     }
 }
 

@@ -22,6 +22,35 @@ namespace ob = ompl::base;
 namespace oc = ompl::control;
 namespace og = ompl::geometric;
 
+// Goal condition that checks only the first two reals (x, y) of any state space.
+// This lets geometric planning ignore velocity/angle components of kinodynamic states.
+class PositionGoalCondition : public ob::GoalRegion
+{
+public:
+    PositionGoalCondition(
+        const ob::SpaceInformationPtr& si,
+        const ob::State* goal_state,
+        double threshold)
+        : ob::GoalRegion(si), goal_state_(goal_state)
+    {
+        threshold_ = threshold;
+    }
+
+    double distanceGoal(const ob::State* st) const override
+    {
+        std::vector<double> s_reals, g_reals;
+        si_->getStateSpace()->copyToReals(s_reals, st);
+        si_->getStateSpace()->copyToReals(g_reals, goal_state_);
+        double dx = s_reals[0] - g_reals[0];
+        double dy = s_reals[1] - g_reals[1];
+        return std::sqrt(dx * dx + dy * dy);
+    }
+
+private:
+    const ob::State* goal_state_;  // non-owning; lifetime managed by goal_states in main
+};
+
+
 // ============================================================================
 // Configuration Structure
 // ============================================================================
@@ -55,11 +84,12 @@ struct ConflictResolutionConfig {
 };
 
 struct CipherGeometricConfig {
-    int decomposition_region_length = 5.0;
+    int decomposition_region_length = 3.0;
     std::vector<int> decomposition_resolution = {10, 10, 1};  // Grid cells in [x, y, z]
     double planning_time_limit = 60.0;
     double max_total_time = 0.0;  // Maximum total planning time in seconds (0 = no limit)
     int seed = -1;  // Random seed (-1 for random)
+    double goal_threshold = 0.5;  // Distance threshold for goal satisfaction
 
     // Decomposition output directory (empty string disables saving)
     std::string decomposition_output_dir = "";
@@ -226,6 +256,13 @@ struct GeometricPlanningResult {
     std::vector<std::shared_ptr<og::PathGeometric>> individual_paths;  // Individual paths per robot
 };
 
+struct GuidedPlanningResult {
+    bool success;
+    double planning_time;
+    std::shared_ptr<og::PathGeometric> path;
+    size_t robot_index;
+};
+
 // ============================================================================
 // CipherGeometricPlanner Class (Geometric Version)
 // ============================================================================
@@ -260,7 +297,7 @@ public:
     // Accessors
     const std::vector<std::vector<int>>& getHighLevelPaths() const { return high_level_paths_; }
     const std::shared_ptr<DecompositionImpl> getDecomposition() const { return decomp_; }
-    const std::vector<og::PathGeometric>& getGuidedPaths() const { return guided_planning_results_; }
+    const std::vector<GuidedPlanningResult>& getGuidedPaths() const { return guided_planning_results_; }
     const std::vector<std::vector<PathSegment>>& getPathSegments() const { return path_segments_; }
     const std::vector<std::shared_ptr<Robot>>& getRobots() const { return robots_; }
     const std::vector<SegmentConflict>& getConflicts() const { return segment_conflicts_; }
@@ -278,6 +315,7 @@ private:
 
     // Robot data
     std::vector<std::shared_ptr<Robot>> robots_;
+    std::vector<std::shared_ptr<ob::SpaceInformation>> robot_sis_;
     std::vector<std::string> robot_types_;
     std::vector<std::vector<double>> starts_;
     std::vector<std::vector<double>> goals_;
@@ -286,7 +324,7 @@ private:
 
     // Planning state
     std::vector<std::vector<int>> high_level_paths_;
-    std::vector<og::PathGeometric> guided_planning_results_;
+    std::vector<GuidedPlanningResult> guided_planning_results_;
     std::vector<std::vector<PathSegment>> path_segments_;  // Segments for each robot
     std::vector<SegmentConflict> segment_conflicts_;     // Detected conflicts
     bool problem_loaded_ = false;
