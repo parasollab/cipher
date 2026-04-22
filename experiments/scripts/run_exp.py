@@ -143,34 +143,49 @@ def main():
 
     scenarios = [
         # "narrow",
-        "open"
+        # "narrow_kino",
+        # "open",
+        # "rooms",
+        # "rooms_kino",
+        # "cross",
+        "cross_kino",
+        # "low_clutter",
+        # "medium_clutter",
+        # "high_clutter"
     ]
 
     methods = [
+    # {
+    #     'name': 'coupled_rrt',
+    #     'executable': str(project_root / 'build' / 'geometric_coupled_rrt'),
+    # }, 
+    # {
+    #     'name': 'decoupled_rrt',
+    #     'executable': str(project_root / 'build' / 'geometric_decoupled_rrt'),
+    # },
+    # {
+    #     'name': 'srrt',
+    #     'executable': str(project_root / 'build' / 'srrt'),
+    # },
+    # {
+    #     'name': 'drrt',
+    #     'executable': str(project_root / 'build' / 'drrt'),
+    # },
+    # {
+    #     'name': 'arc',
+    #     'executable': str(project_root / 'build' / 'arc'),
+    # },
     {
-        'name': 'coupled_rrt',
-        'executable': str(project_root / 'build' / 'geometric_coupled_rrt'),
-    }, 
-    {
-        'name': 'decoupled_rrt',
-        'executable': str(project_root / 'build' / 'geometric_decoupled_rrt'),
+        'name': 'kino_coupled_rrt',
+        'executable': str(project_root / 'build' / 'kinodynamic_coupled_rrt'),
     },
     {
-        'name': 'srrt',
-        'executable': str(project_root / 'build' / 'srrt'),
-    },
-    {
-        'name': 'drrt',
-        'executable': str(project_root / 'build' / 'drrt'),
-    },
-    {
-        'name': 'arc',
-        'executable': str(project_root / 'build' / 'arc'),
-
+        'name': 'kino_decoupled_rrt',
+        'executable': str(project_root / 'build' / 'kinodynamic_decoupled_rrt'),
     }
     ]
 
-    summary_file = project_root / 'experiments' / 'results' / 'summary.csv'
+    summary_file = project_root / 'experiments' / 'results' / 'kino_summary.csv'
 
     # Write header to summary file if it doesn't exist or if we're overwriting results
     if summary_file.exists() and not overwrite_results:
