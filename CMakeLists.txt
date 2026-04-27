@@ -17,6 +17,7 @@ find_package(crocoddyl REQUIRED)
 
 add_subdirectory(Multi-Robot-OMPL EXCLUDE_FROM_ALL)
 add_subdirectory(db-CBS EXCLUDE_FROM_ALL)
+set_target_properties(main_ompl main_kcbs db_cbs PROPERTIES EXCLUDE_FROM_ALL FALSE)
 
 include_directories(
   ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
@@ -161,6 +162,11 @@ add_executable(kinodynamic_coupled_rrt
   src/kinodynamic/coupled_rrt.cpp
   db-CBS/src/robots.cpp
 )
+
+add_executable(k_arc
+  src/kinodynamic/k_arc.cpp
+  db-CBS/src/robots.cpp
+)
 target_include_directories(kinodynamic_coupled_rrt PRIVATE
   ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
   ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
@@ -175,6 +181,23 @@ target_link_libraries(kinodynamic_coupled_rrt PRIVATE
   Boost::program_options
   ${YAML_LIBRARIES}
   ${FCL_LIBRARIES}
+)
+
+target_include_directories(k_arc PRIVATE
+  ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_SOURCE_DIR}/db-CBS/src
+  ${YAML_INCLUDE_DIRS}
+  ${FCL_INCLUDE_DIRS}
+)
+target_link_directories(k_arc PRIVATE ${YAML_LIBRARY_DIRS})
+target_link_libraries(k_arc PRIVATE
+  ompl
+  Eigen3::Eigen
+  Boost::program_options
+  ${YAML_LIBRARIES}
+  ${FCL_LIBRARIES}
+  crocoddyl::crocoddyl
 )
 
 enable_testing()

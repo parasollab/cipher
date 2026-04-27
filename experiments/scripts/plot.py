@@ -83,7 +83,7 @@ def plot_makespan(df, scenario, methods, num_robots, output_dir, file_name):
 def main():
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-    kino = False
+    kino = True
 
     summary_file = os.path.join(project_root, 'experiments', 'results', 'summary.csv' if not kino else 'kino_summary.csv')
     df = pd.read_csv(summary_file)
@@ -99,13 +99,27 @@ def main():
         "medium_clutter",
         "high_clutter"
     ] if not kino else [
-        "narrow_kino",
+        "narrow",
         "open",
-        "rooms_kino",
-        "cross_kino",
+        "rooms",
+        "cross",
         "low_clutter",
         "medium_clutter",
-        "high_clutter"
+        "high_clutter",
+        "open_second",
+        "narrow_second",
+        "rooms_second",
+        "cross_second",
+        "low_clutter_second",
+        "medium_clutter_second",
+        "high_clutter_second",
+        "open_double",
+        "narrow_double",
+        "rooms_double",
+        "cross_double",
+        "low_clutter_double",
+        "medium_clutter_double",
+        "high_clutter_double"
     ]
 
     methods = [
@@ -117,6 +131,7 @@ def main():
     ] if not kino else [
         'kino_coupled_rrt',
         'kino_decoupled_rrt',
+        'kcbs'
     ]
 
     output_dir = os.path.join(project_root, 'experiments', 'plots')

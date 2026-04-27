@@ -1,0 +1,37 @@
+environment:
+  min: [0.0, 0.0]
+  max: [30.0, 30.0]
+  obstacles: []
+
+robots:
+  - type: unicycle_second_order_0
+    start: [2.5, 3.3, 0.0, 0.0] # [x, y, theta, velocity]
+    goal: [27.5, 3.3, 0.0, 0.0]
+
+  - type: unicycle_second_order_0
+    start: [27.5, 3.3, 0.0, 0.0]
+    goal: [2.5, 3.3, 0.0, 0.0]
+
+  - type: unicycle_second_order_0
+    start: [2.5, 6.6, 0.0, 0.0] # [x, y, theta, velocity]
+    goal: [27.5, 6.6, 0.0, 0.0]
+
+  - type: unicycle_second_order_0
+    start: [27.5, 6.6, 0.0, 0.0]
+    goal: [2.5, 6.6, 0.0, 0.0]
+
+  - type: unicycle_second_order_0
+    start: [2.5, 10, 0.0, 0.0] # [x, y, theta, velocity]
+    goal: [27.5, 10, 0.0, 0.0]
+
+  - type: unicycle_second_order_0
+    start: [27.5, 10, 0.0, 0.0]
+    goal: [2.5, 10, 0.0, 0.0]
+
+  - type: unicycle_second_order_0
+    start: [2.5, 13.3, 0.0, 0.0] # [x, y, theta, velocity]
+    goal: [27.5, 13.3, 0.0, 0.0]
+
+  - type: unicycle_second_order_0
+    start: [27.5, 13.3, 0.0, 0.0]
+    goal: [2.5, 13.3, 0.0, 0.0]
