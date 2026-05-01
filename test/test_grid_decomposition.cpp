@@ -245,3 +245,114 @@ BOOST_AUTO_TEST_CASE(Decompose3D_Recursive)
         }
     }
 }
+
+// ─── getDecompositionDepth tests ─────────────────────────────────────────────
+
+BOOST_AUTO_TEST_CASE(DecompositionDepth_FlatGridIsZero)
+{
+    auto d = makeDecomp(4, 2);
+    for (int rid = 0; rid < d.getNumRegions(); ++rid)
+        BOOST_CHECK_EQUAL(d.getDecompositionDepth(rid), 0);
+}
+
+BOOST_AUTO_TEST_CASE(DecompositionDepth_ChildrenAreOne)
+{
+    auto d = makeDecomp(4, 2);
+    d.Decompose(0);
+    for (int child : d.getChildRegions(0))
+        BOOST_CHECK_EQUAL(d.getDecompositionDepth(child), 1);
+}
+
+BOOST_AUTO_TEST_CASE(DecompositionDepth_GrandchildrenAreTwo)
+{
+    auto d = makeDecomp(4, 2);
+    d.Decompose(0);
+    int firstChild = d.getChildRegions(0)[0];
+    d.Decompose(firstChild);
+    for (int gc : d.getChildRegions(firstChild))
+        BOOST_CHECK_EQUAL(d.getDecompositionDepth(gc), 2);
+}
+
+BOOST_AUTO_TEST_CASE(DecompositionDepth_ParentUnchangedAfterDecompose)
+{
+    // Decomposing a region should not change its own reported depth
+    auto d = makeDecomp(4, 2);
+    d.Decompose(0);
+    BOOST_CHECK_EQUAL(d.getDecompositionDepth(0), 0);
+}
+
+BOOST_AUTO_TEST_CASE(DecompositionDepth_MultipleRootsIndependent)
+{
+    auto d = makeDecomp(4, 2);
+    d.Decompose(0);
+    d.Decompose(5);
+    for (int child : d.getChildRegions(5))
+        BOOST_CHECK_EQUAL(d.getDecompositionDepth(child), 1);
+}
+
+BOOST_AUTO_TEST_CASE(DecompositionDepth_3D)
+{
+    auto d = makeDecomp(3, 3);
+    d.Decompose(0);
+    for (int child : d.getChildRegions(0))
+        BOOST_CHECK_EQUAL(d.getDecompositionDepth(child), 1);
+
+    int firstChild = d.getChildRegions(0)[0];
+    d.Decompose(firstChild);
+    for (int gc : d.getChildRegions(firstChild))
+        BOOST_CHECK_EQUAL(d.getDecompositionDepth(gc), 2);
+}
+
+// ─── getMaxDecompositions tests ──────────────────────────────────────────────
+
+BOOST_AUTO_TEST_CASE(MaxDecompositions_CountHalvingsAboveThreshold)
+{
+    // Single cell [0,1]^2, side=1.0, minSideLength=0.1:
+    // 1.0→0.5→0.25→0.125 (all >0.1), 0.0625 not >0.1 → 3 halvings
+    auto d = makeDecomp(1, 2);
+    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.1), 3);
+}
+
+BOOST_AUTO_TEST_CASE(MaxDecompositions_AlreadyTooSmall)
+{
+    // 4x4 grid, cells have side 0.25; 0.25/2=0.125 not >0.2 → 0
+    auto d = makeDecomp(4, 2);
+    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.2), 0);
+}
+
+BOOST_AUTO_TEST_CASE(MaxDecompositions_ExactHalfIsNotStrictlyAbove)
+{
+    // 2x2 grid, cells have side 0.5; 0.5/2=0.25 which is not strictly >0.25 → 0
+    auto d = makeDecomp(2, 2);
+    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.25), 0);
+}
+
+BOOST_AUTO_TEST_CASE(MaxDecompositions_VirtualChildRegion)
+{
+    // After decomposing the single [0,1]^2 cell (side=1.0), children have side=0.5.
+    // 0.5→0.25→0.125 (all >0.1), 0.0625 not >0.1 → 2
+    auto d = makeDecomp(1, 2);
+    d.Decompose(0);
+    int child = d.getChildRegions(0)[0];
+    BOOST_CHECK_EQUAL(d.getMaxDecompositions(child, 0.1), 2);
+    // Parent answer unchanged
+    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.1), 3);
+}
+
+BOOST_AUTO_TEST_CASE(MaxDecompositions_AsymmetricBoundsUsesMinSide)
+{
+    // X: [0,4], Y: [0,1], length=4 → cells are 1.0 wide (X) × 0.25 tall (Y)
+    // Min side = 0.25; 0.25/2=0.125>0.1 (n=1), 0.0625 not >0.1 → 1
+    ompl::base::RealVectorBounds bounds(2);
+    bounds.low[0] = 0.0; bounds.high[0] = 4.0;
+    bounds.low[1] = 0.0; bounds.high[1] = 1.0;
+    GridDecompositionImpl d(2, bounds, 1.0);
+    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.1), 1);
+}
+
+BOOST_AUTO_TEST_CASE(MaxDecompositions_3D)
+{
+    // Single cell [0,1]^3, side=1.0 — same halving logic as 2D
+    auto d = makeDecomp(1, 3);
+    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.1), 3);
+}

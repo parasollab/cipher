@@ -41,6 +41,8 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
     void getNeighbors(int rid, std::vector<int>& neighbors) const override;
 
     void Decompose(int rid) override;
+    int getDecompositionDepth(int rid) const override;
+    int getMaxDecompositions(int rid, double minSideLength) const override;
 
     // Set the robot state space so that project/sampleFullState work with any
     // state type (SE2, RealVector, etc.) via copyToReals/copyFromReals.
@@ -66,6 +68,7 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
   private:
     int nextVirtualId_;
     std::unordered_map<int, std::vector<int>> children_;
+    std::unordered_map<int, int> parent_;
     std::unordered_map<int, std::shared_ptr<ompl::base::RealVectorBounds>> virtualBounds_;
     ompl::base::StateSpacePtr state_space_;  // optional; enables generic project/sampleFullState
 };

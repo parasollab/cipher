@@ -29,6 +29,8 @@ class DecompositionImpl {
 
     // Extended interface
     virtual void Decompose(int rid) = 0;
+    virtual int getDecompositionDepth(int rid) const = 0;
+    virtual int getMaxDecompositions(int rid, double minSideLength) const = 0;
 };
 
 #endif // DECOMPOSITION_IMPL_H
