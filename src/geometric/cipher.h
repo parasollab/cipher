@@ -7,6 +7,7 @@
 #include <chrono>
 #include <map>
 #include <memory>
+#include <unordered_map>
 #include <mutex>
 #include <tuple>
 #include <vector>
@@ -57,7 +58,7 @@ private:
 
 struct MAPFConfig {
     std::string method = "cbs";  // Options: "decoupled", "astar", "cbs"
-    int region_capacity = 1;           // Robots per vertex/edge (for CBS)
+    int region_capacity = 2;           // Robots per vertex/edge (for CBS)
     double max_obstacle_volume_percent = 0.5;  // Maximum obstacle volume in a region (0.0 to 1.0)
     double mapf_timeout = 30.0;          // Timeout for MAPF solver in seconds
 };
@@ -84,7 +85,7 @@ struct ConflictResolutionConfig {
 };
 
 struct CipherGeometricConfig {
-    int decomposition_region_length = 3.0;
+    int decomposition_region_length = 5.0;
     std::vector<int> decomposition_resolution = {10, 10, 1};  // Grid cells in [x, y, z]
     double planning_time_limit = 60.0;
     double max_total_time = 0.0;  // Maximum total planning time in seconds (0 = no limit)
@@ -119,8 +120,7 @@ struct PathSegment {
     size_t segment_index;         // Index of this segment in the robot's path
     ob::State* start_state;       // Start state of segment (owned by original path)
     ob::State* end_state;         // End state of segment (owned by original path)
-    std::vector<oc::Control*> controls;      // Controls in this segment (owned by original path)
-    std::vector<double> control_durations;   // Duration for each control (may be partial)
+    std::vector<ob::State*> states;      // States of segment (owned by original path)
     double total_duration;        // Total duration of this segment
     int start_timestep;           // Starting timestep of this segment
     int end_timestep;             // Ending timestep of this segment
@@ -157,12 +157,14 @@ struct SegmentConflict {
 
 struct PathUpdateInfo {
     size_t robot_index;
-    int start_timestep;
-    int end_timestep;
+    int start_timestep;            // first timestep inside the expanded region
+    int end_timestep;              // first timestep outside the expanded region
     size_t start_segment_idx;
     size_t end_segment_idx;
-    ob::State* entry_state;
-    ob::State* exit_state;
+    ob::State* region_entry_state;  // first state inside the expanded region
+    ob::State* region_exit_state;   // last state inside the expanded region
+    ob::State* planning_entry_state;    // last state outside the expanded region (before entering)
+    ob::State* planning_exit_state;     // first state outside the expanded region (after exiting)
 };
 
 // ============================================================================
@@ -341,6 +343,11 @@ private:
     // Hierarchical decomposition tracking
     std::vector<DecompositionCell> decomposition_hierarchy_;  // One cell per initial region
 
+    // Tracks the highest refinement_level that has been applied to each original region.
+    // Used to skip redundant sub-grid creation when a cell is included in a larger
+    // expanded region but was already decomposed at the same level.
+    std::unordered_map<int, int> region_refinement_level_;
+
     // Helper methods
     void setupDecomposition();
     void setupCollisionManager();
@@ -391,7 +398,9 @@ private:
 
     bool refineExpandedRegion(
         const SegmentConflict& conflict,
+        int conflict_region,
         const std::vector<int>& expanded_regions,
+        int expansion_layer,
         int refinement_level);
 
     int calculateMaxExpansionLayers() const;
@@ -418,10 +427,10 @@ private:
         PathUpdateInfo& update_info_2);
 
     // Helper methods for all strategies
-    DecompositionImpl* createLocalDecomposition(
+    std::shared_ptr<DecompositionImpl> createLocalDecomposition(
         int parent_region,
         double subdivision_factor);
-    DecompositionImpl* createMultiCellDecomposition(
+    std::shared_ptr<DecompositionImpl> createMultiCellDecomposition(
         const std::vector<int>& regions,
         double subdivision_factor);
     bool extractReplanningBounds(
@@ -429,9 +438,14 @@ private:
         int conflict_region,
         PathUpdateInfo& update_info_1,
         PathUpdateInfo& update_info_2);
+    // bool extractReplanningBoundsForExpandedRegion(
+    //     const SegmentConflict& collision,
+    //     const std::vector<int>& expanded_regions,
+    //     PathUpdateInfo& update_info_1,
+    //     PathUpdateInfo& update_info_2);
     void integrateRefinedPaths(
         const std::vector<size_t>& robot_indices,
-        const std::vector<og::PathGeometric>& local_results,
+        const std::vector<GuidedPlanningResult>& local_results,
         const PathUpdateInfo& update_info_1,
         const PathUpdateInfo& update_info_2);
     void recheckConflictsFromTimestep(int start_timestep);
@@ -458,7 +472,7 @@ private:
     void initializeDecompositionHierarchy();
     DecompositionCell* findCellByRegion(int region_id);
     DecompositionCell* findCellByRegionRecursive(DecompositionCell& cell, int region_id);
-    void recordRefinement(int parent_region, const DecompositionImpl* local_decomp);
+    void recordRefinement(int parent_region, const std::shared_ptr<DecompositionImpl> local_decomp);
     YAML::Node serializeDecompositionHierarchy() const;
     YAML::Node serializeCellRecursive(const DecompositionCell& cell) const;
 
@@ -469,6 +483,13 @@ private:
     std::vector<YAML::Node> viz_events_;
     void initVizHeader();
     void vizWriteFile() const;
+    void vizEmitCoupledPlanning(const std::vector<size_t>& robot_indices,
+                                const std::vector<int>& cell_ids);
+    // new_cells: (id_string, bounds_min, bounds_max) for each sub-cell created
+    void vizEmitGridUpdate(const std::vector<int>& removed_cell_ids,
+                           const std::vector<std::tuple<std::string,
+                                                        std::vector<double>,
+                                                        std::vector<double>>>& new_cells);
 
 public:
     void setVizFile(const std::string& path) { viz_file_ = path; do_viz_ = !path.empty(); }

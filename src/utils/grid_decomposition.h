@@ -7,6 +7,46 @@
 #include <unordered_map>
 #include <vector>
 
+// Rectangular grid decomposition with independent per-dimension cell counts.
+// Unlike GridDecompositionImpl (which requires a single length for all dims),
+// this correctly handles non-square expanded regions where n_x != n_y.
+// Each cell has size (span_x/length_x) × (span_y/length_y), which equals
+// original_cell_size/sf in both dimensions when used for refinement.
+class RectGridDecompositionImpl : public DecompositionImpl {
+  public:
+    // lengths[i] = number of cells along dimension i
+    RectGridDecompositionImpl(const std::vector<int>& lengths,
+                               const ompl::base::RealVectorBounds& bounds,
+                               const ompl::base::StateSpacePtr& space);
+
+    int getNumRegions() const override { return num_regions_; }
+    int getDimension() const override { return dim_; }
+    const ompl::base::RealVectorBounds& getBounds() const override { return bounds_; }
+    double getRegionVolume(int rid) override;
+    int locateRegion(const ompl::base::State* s) const override;
+    void project(const ompl::base::State* s, std::vector<double>& coord) const override;
+    void getNeighbors(int rid, std::vector<int>& neighbors) const override;
+    void getAllNeighbors(int rid, std::vector<int>& neighbors) const override;
+    void sampleFromRegion(int rid, ompl::RNG& rng, std::vector<double>& coord) const override;
+    void sampleFullState(const ompl::base::StateSamplerPtr& sampler,
+                         const std::vector<double>& coord, ompl::base::State* s) const override;
+    ompl::base::RealVectorBounds getCellBounds(int rid) const override;
+    void Decompose(int rid) override {}  // not needed for local refinement decomps
+
+  private:
+    int dim_;
+    int num_regions_;
+    std::vector<int> lengths_;       // cells per dimension
+    std::vector<double> cell_size_;  // (bounds.high[i] - bounds.low[i]) / lengths_[i]
+    ompl::base::RealVectorBounds bounds_;
+    ompl::base::StateSpacePtr state_space_;
+
+    // Convert flat region id to per-dimension indices
+    std::vector<int> ridToCoord(int rid) const;
+    // Convert per-dimension indices to flat region id (-1 if out of range)
+    int coordToRid(const std::vector<int>& coord) const;
+};
+
 class GridDecompositionImpl : public ompl::control::GridDecomposition, public DecompositionImpl {
   public:
     GridDecompositionImpl(const int length, const int dim, const ompl::base::RealVectorBounds& bounds);
@@ -39,6 +79,9 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
 
     // Override to only return cardinal neighbors (no diagonals)
     void getNeighbors(int rid, std::vector<int>& neighbors) const override;
+
+    // Returns all 8 neighbors (cardinal + diagonal)
+    void getAllNeighbors(int rid, std::vector<int>& neighbors) const override;
 
     void Decompose(int rid) override;
 

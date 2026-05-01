@@ -23,6 +23,7 @@ class DecompositionImpl {
     virtual int locateRegion(const ompl::base::State* s) const = 0;
     virtual void project(const ompl::base::State* s, std::vector<double>& coord) const = 0;
     virtual void getNeighbors(int rid, std::vector<int>& neighbors) const = 0;
+    virtual void getAllNeighbors(int rid, std::vector<int>& neighbors) const = 0;
     virtual void sampleFromRegion(int rid, ompl::RNG& rng, std::vector<double>& coord) const = 0;
     virtual void sampleFullState(const ompl::base::StateSamplerPtr& sampler, const std::vector<double>& coord, ompl::base::State* s) const = 0;
     virtual ompl::base::RealVectorBounds getCellBounds(int rid) const = 0;

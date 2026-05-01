@@ -438,6 +438,45 @@ class Visualizer:
         self.artists['mapf_lines'] = lines
         self._draw_all_cells()
 
+    def handle_local_mapf(self, event):
+        """Local CBS paths within a refined sub-decomposition.
+
+        Drawn on separate artist keys so the global MAPF coloring stays
+        visible underneath.  Sub-cells are registered by a preceding
+        grid_update event, so self.cells already contains them by the time
+        this event is processed.
+        """
+        self._clear_artists('local_mapf_fills')
+        self._clear_artists('local_mapf_lines')
+        fills, lines = [], []
+
+        local_paths = dict(event.get('paths', {}))
+
+        for rid, cell_ids in local_paths.items():
+            color = self.robot_colors.get(rid, 'gray')
+            centers = []
+            for cid in cell_ids:
+                cell = self.cells.get(cid)
+                if cell is None:
+                    print(f'Warning: local_mapf references unknown cell "{cid}"',
+                          file=sys.stderr)
+                    continue
+                # Stronger alpha + solid outline so local paths stand out over
+                # the global MAPF fill.
+                fills.append(self._fill_cell(cell['bounds']['min'],
+                                             cell['bounds']['max'],
+                                             color, alpha=0.40))
+                arts = self._draw_cell_edges(
+                    cell['bounds']['min'], cell['bounds']['max'],
+                    color, lw=2.0)
+                fills.extend(arts)
+                centers.append(self._cell_center(cell))
+            if len(centers) >= 2:
+                lines.append(self._draw_mapf_line(centers, color))
+
+        self.artists['local_mapf_fills'] = fills
+        self.artists['local_mapf_lines'] = lines
+
     def handle_raw_trajectory(self, event):
         self._clear_artists('raw_paths')
         self.raw_paths = dict(event.get('paths', {}))
@@ -681,6 +720,7 @@ class Visualizer:
 
         handlers = {
             'mapf':             self.handle_mapf,
+            'local_mapf':       self.handle_local_mapf,
             'raw_trajectory':   self.handle_raw_trajectory,
             'low_level_paths':  self.handle_low_level_paths,
             'segments':         self.handle_segments,

@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 find_package(Eigen3 REQUIRED)
 find_package(Boost REQUIRED COMPONENTS unit_test_framework program_options)
 find_package(fcl REQUIRED)

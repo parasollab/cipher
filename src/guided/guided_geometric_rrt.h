@@ -281,7 +281,7 @@ protected:
 
     std::unordered_map<int, int> coverage_map;
 
-    int min_coverage = 10;
+    int min_coverage = 5;
 
 };
 

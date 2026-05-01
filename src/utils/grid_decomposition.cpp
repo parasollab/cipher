@@ -3,6 +3,143 @@
 #include <ompl/base/spaces/SE2StateSpace.h>
 #include <ompl/base/spaces/SE3StateSpace.h>
 #include <cmath>
+#include <numeric>
+#include <stdexcept>
+
+// ─── RectGridDecompositionImpl ────────────────────────────────────────────────
+
+RectGridDecompositionImpl::RectGridDecompositionImpl(
+    const std::vector<int>& lengths,
+    const ompl::base::RealVectorBounds& bounds,
+    const ompl::base::StateSpacePtr& space)
+    : dim_(static_cast<int>(lengths.size())),
+      bounds_(bounds),
+      lengths_(lengths),
+      state_space_(space)
+{
+    num_regions_ = 1;
+    cell_size_.resize(dim_);
+    for (int i = 0; i < dim_; ++i) {
+        num_regions_ *= lengths_[i];
+        cell_size_[i] = (bounds_.high[i] - bounds_.low[i]) / lengths_[i];
+    }
+}
+
+std::vector<int> RectGridDecompositionImpl::ridToCoord(int rid) const
+{
+    std::vector<int> coord(dim_);
+    for (int i = 0; i < dim_; ++i) {
+        coord[i] = rid % lengths_[i];
+        rid /= lengths_[i];
+    }
+    return coord;
+}
+
+int RectGridDecompositionImpl::coordToRid(const std::vector<int>& coord) const
+{
+    for (int i = 0; i < dim_; ++i)
+        if (coord[i] < 0 || coord[i] >= lengths_[i]) return -1;
+    int rid = 0, stride = 1;
+    for (int i = 0; i < dim_; ++i) {
+        rid += coord[i] * stride;
+        stride *= lengths_[i];
+    }
+    return rid;
+}
+
+ompl::base::RealVectorBounds RectGridDecompositionImpl::getCellBounds(int rid) const
+{
+    auto coord = ridToCoord(rid);
+    ompl::base::RealVectorBounds b(dim_);
+    for (int i = 0; i < dim_; ++i) {
+        b.setLow(i,  bounds_.low[i] + coord[i]       * cell_size_[i]);
+        b.setHigh(i, bounds_.low[i] + (coord[i] + 1) * cell_size_[i]);
+    }
+    return b;
+}
+
+double RectGridDecompositionImpl::getRegionVolume(int /*rid*/)
+{
+    double vol = 1.0;
+    for (int i = 0; i < dim_; ++i) vol *= cell_size_[i];
+    return vol;
+}
+
+void RectGridDecompositionImpl::project(const ompl::base::State* s,
+                                         std::vector<double>& coord) const
+{
+    std::vector<double> reals;
+    state_space_->copyToReals(reals, s);
+    coord.resize(dim_);
+    for (int i = 0; i < dim_; ++i) coord[i] = reals[i];
+}
+
+int RectGridDecompositionImpl::locateRegion(const ompl::base::State* s) const
+{
+    std::vector<double> coord;
+    project(s, coord);
+    std::vector<int> idx(dim_);
+    for (int i = 0; i < dim_; ++i) {
+        idx[i] = static_cast<int>((coord[i] - bounds_.low[i]) / cell_size_[i]);
+        if (idx[i] < 0 || idx[i] >= lengths_[i]) return -1;
+    }
+    return coordToRid(idx);
+}
+
+void RectGridDecompositionImpl::getNeighbors(int rid, std::vector<int>& neighbors) const
+{
+    neighbors.clear();
+    auto coord = ridToCoord(rid);
+    for (int d = 0; d < dim_; ++d) {
+        for (int delta : {-1, 1}) {
+            auto nc = coord;
+            nc[d] += delta;
+            int nid = coordToRid(nc);
+            if (nid >= 0) neighbors.push_back(nid);
+        }
+    }
+}
+
+void RectGridDecompositionImpl::getAllNeighbors(int rid, std::vector<int>& neighbors) const
+{
+    neighbors.clear();
+    auto coord = ridToCoord(rid);
+    // Iterate over all combinations of delta in {-1,0,+1} per dimension, skip self
+    std::function<void(int, std::vector<int>&)> recurse = [&](int d, std::vector<int>& nc) {
+        if (d == dim_) {
+            if (nc == coord) return;
+            int nid = coordToRid(nc);
+            if (nid >= 0) neighbors.push_back(nid);
+            return;
+        }
+        for (int delta : {-1, 0, 1}) {
+            nc[d] = coord[d] + delta;
+            recurse(d + 1, nc);
+        }
+    };
+    std::vector<int> nc(dim_);
+    recurse(0, nc);
+}
+
+void RectGridDecompositionImpl::sampleFromRegion(int rid, ompl::RNG& rng,
+                                                  std::vector<double>& coord) const
+{
+    auto cb = getCellBounds(rid);
+    coord.resize(dim_);
+    for (int i = 0; i < dim_; ++i)
+        coord[i] = rng.uniformReal(cb.low[i], cb.high[i]);
+}
+
+void RectGridDecompositionImpl::sampleFullState(const ompl::base::StateSamplerPtr& sampler,
+                                                 const std::vector<double>& coord,
+                                                 ompl::base::State* s) const
+{
+    sampler->sampleUniform(s);
+    std::vector<double> reals;
+    state_space_->copyToReals(reals, s);
+    for (int i = 0; i < dim_; ++i) reals[i] = coord[i];
+    state_space_->copyFromReals(s, reals);
+}
 
 static int computeLength(int dim, const ompl::base::RealVectorBounds& bounds, double region_size)
 {
@@ -133,6 +270,49 @@ void GridDecompositionImpl::getNeighbors(int rid, std::vector<int>& neighbors) c
             {
                 neighbors.push_back(nz * length_ * length_ + ny * length_ + nx);
             }
+        }
+    }
+}
+
+void GridDecompositionImpl::getAllNeighbors(int rid, std::vector<int>& neighbors) const
+{
+    neighbors.clear();
+
+    if (dimension_ == 2)
+    {
+        int row = rid / length_;
+        int col = rid % length_;
+
+        // All 8 directions: cardinal + diagonal
+        const int drow[] = {-1, -1, -1, 0, 0, 1, 1, 1};
+        const int dcol[] = {-1,  0,  1, -1, 1, -1, 0, 1};
+
+        for (int i = 0; i < 8; ++i)
+        {
+            int nrow = row + drow[i];
+            int ncol = col + dcol[i];
+
+            if (nrow >= 0 && nrow < length_ && ncol >= 0 && ncol < length_)
+            {
+                neighbors.push_back(nrow * length_ + ncol);
+            }
+        }
+    }
+    else if (dimension_ == 3)
+    {
+        int z = rid / (length_ * length_);
+        int y = (rid / length_) % length_;
+        int x = rid % length_;
+
+        // All 26 directions: face + edge + corner neighbors
+        for (int dz = -1; dz <= 1; ++dz)
+        for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx)
+        {
+            if (dx == 0 && dy == 0 && dz == 0) continue;
+            int nx = x + dx, ny = y + dy, nz = z + dz;
+            if (nx >= 0 && nx < length_ && ny >= 0 && ny < length_ && nz >= 0 && nz < length_)
+                neighbors.push_back(nz * length_ * length_ + ny * length_ + nx);
         }
     }
 }
