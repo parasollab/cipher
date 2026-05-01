@@ -1,7 +1,42 @@
+import argparse
+import os
 import subprocess
+import time
 from pathlib import Path
 import yaml
 import numpy as np
+
+METHOD_EXECUTABLES = {
+    'coupled_rrt':        'geometric_coupled_rrt',
+    'decoupled_rrt':      'geometric_decoupled_rrt',
+    'srrt':               'srrt',
+    'drrt':               'drrt',
+    'arc':                'arc',
+    'kino_coupled_rrt':   'kinodynamic_coupled_rrt',
+    'kino_decoupled_rrt': 'kinodynamic_decoupled_rrt',
+    'kcbs':               'db-CBS/main_kcbs',
+    'db_cbs':             'db-CBS/db_cbs',
+    'k_arc':              'k_arc',
+}
+
+def get_extra_args(method, output_full_path, timeout):
+    if method == 'kcbs':
+        return ['--timelimit', str(int(timeout))]
+    elif method == 'db_cbs':
+        base = Path(output_full_path)
+        return [
+            '--joint', str(base.parent / (base.stem + '_joint.yaml')),
+            '--optimization', str(base.parent / (base.stem + '_opt.yaml')),
+        ]
+    return []
+
+def get_env(method):
+    env = os.environ.copy()
+    if method == 'k_arc':
+        lib_path = '/home/courtney/cipher/install/lib'
+        existing = env.get('LD_LIBRARY_PATH', '')
+        env['LD_LIBRARY_PATH'] = f"{lib_path}:{existing}" if existing else lib_path
+    return env
 
 def compute_makespan(output):
     # load the yaml plan file and compute the makespan
@@ -35,7 +70,7 @@ def compute_sum_of_costs(output):
 
     return total_cost
 
-def run_planner(executable, problem_file, output_file, config_file, timeout, seed, out_config_dir):
+def run_planner(executable, problem_file, output_file, config_file, timeout, seed, out_config_dir, extra_args=[], env=None):
     """
     Run a planner executable and return the result.
 
@@ -62,7 +97,7 @@ def run_planner(executable, problem_file, output_file, config_file, timeout, see
         '-i', str(problem_file),
         '-o', str(output_file),
         '-c', str(out_config_file),
-    ]
+    ] + extra_args
 
     print(f"Executing command: {' '.join(cmd)}")
 
@@ -76,23 +111,30 @@ def run_planner(executable, problem_file, output_file, config_file, timeout, see
     }
 
     try:
+        start = time.time()
         proc = subprocess.run(
             cmd,
             timeout=timeout + 30,  # Extra buffer for cleanup
             capture_output=True,
-            text=True
+            text=True,
+            env=env
         )
+        elapsed = time.time() - start
 
         # Parse output file
         if Path(output_file).exists():
             with open(output_file, 'r') as f:
                 output = yaml.safe_load(f)
-                result['solved'] = output.get('solved', output.get('success', False))
-                result['planning_time'] = output.get('planning_time', timeout)
-                if result['solved']:
-                    result['makespan'] = compute_makespan(output)
-                    result['sum_of_costs'] = compute_sum_of_costs(output)
+            solved = output.get('solved', output.get('success', None))
+            if solved is None:  # kcbs/db_cbs omit this field; infer from result presence
+                solved = bool(output.get('result'))
+            result['solved'] = solved
+            result['planning_time'] = output.get('planning_time', elapsed)
+            if result['solved']:
+                result['makespan'] = compute_makespan(output)
+                result['sum_of_costs'] = compute_sum_of_costs(output)
         else:
+            result['planning_time'] = elapsed
             result['error'] = 'No output file generated'
 
     except subprocess.TimeoutExpired:
@@ -103,24 +145,32 @@ def run_planner(executable, problem_file, output_file, config_file, timeout, see
 
     return result
 
-def run_method(method, executable, problem_file, output_file, config_file, timeout, num_robots, num_seeds, summary_file, base_output_dir=None):
+def run_method(method, scenario, executable, problem_file, output_file, config_file, timeout, num_robots, num_seeds, summary_file, base_output_dir=None):
     """
     Run the planner for a range of robot counts and print results.
     Stops early if the planner fails to solve all instances for a given robot count.
     """
+    env = get_env(method)
     for robots in num_robots:
         success_count = 0
         for seed in range(1, num_seeds + 1):
             output_full_path = f"{output_file}/{robots}/{seed}.yaml"
-            result = run_planner(executable, problem_file + str(robots) + '.yaml', output_full_path, config_file, timeout, seed, f"{base_output_dir}/experiments/configs/{method}/{robots}")
+            extra_args = get_extra_args(method, output_full_path, timeout)
+            result = run_planner(executable, problem_file + str(robots) + '.yaml', output_full_path, config_file, timeout, seed, f"{base_output_dir}/experiments/configs/{method}/{robots}", extra_args=extra_args, env=env)
             print(f"\tResult: {result['solved']}, Time: {result['planning_time']:.2f}s, Timed out: {result['timed_out']}, Error: {result['error']}")
 
             if result['solved']:
                 success_count += 1
 
-            # Write results to summary file
-            with open(summary_file, 'a') as f:
-                f.write(f"{method},{robots},{seed},{result['solved']},{result['planning_time']:.2f},{result['timed_out']},{result['makespan']},{result['sum_of_costs']}\n")
+            # Write results to summary file, overwriting any existing entry for this key
+            new_line = f"{method},{scenario},{robots},{seed},{result['solved']},{result['planning_time']:.5f},{result['timed_out']},{result['makespan']},{result['sum_of_costs']}\n"
+            with open(summary_file, 'r') as f:
+                lines = f.readlines()
+            key_prefix = f"{method},{scenario},{robots},{seed},"
+            lines = [l for l in lines if not l.startswith(key_prefix)]
+            lines.append(new_line)
+            with open(summary_file, 'w') as f:
+                f.writelines(lines)
 
         print(f"Successfully solved {success_count}/{num_seeds} instances for {robots} robots.")
 
@@ -129,48 +179,41 @@ def run_method(method, executable, problem_file, output_file, config_file, timeo
             break
 
 def main():
-    # Get the directory of the current script
     script_dir = Path(__file__).parent
     project_root = script_dir.parent.parent
 
-    overwrite_results = False
+    parser = argparse.ArgumentParser(description="Run multi-robot planning experiments.")
+    parser.add_argument('--scenarios', nargs='+', required=True, help="Scenario names")
+    parser.add_argument('--methods', nargs='+', required=True, choices=list(METHOD_EXECUTABLES.keys()), help="Method names (k_arc requires install/lib on LD_LIBRARY_PATH, handled automatically)")
+    parser.add_argument('--output', default='summary.csv', help="Output CSV filename in experiments/results/ (default: summary.csv)")
+    parser.add_argument('--robots', nargs='+', type=int, default=[2, 4, 8, 16], help="Robot counts (default: 2 4 8 16)")
+    parser.add_argument('--seeds', type=int, default=10, help="Number of seeds per configuration (default: 10)")
+    parser.add_argument('--timeout', type=float, default=600.0, help="Planner timeout in seconds (default: 600)")
+    parser.add_argument('--overwrite', action='store_true', help="Overwrite the output file instead of appending")
+    args = parser.parse_args()
 
-    scenarios = [
-        "narrow",
-        # "open"
-    ]
+    methods = [{'name': m, 'executable': str(project_root / 'build' / METHOD_EXECUTABLES[m])} for m in args.methods]
 
-    methods = [
-    {
-        'name': 'coupled_rrt',
-        'executable': str(project_root / 'build' / 'geometric_coupled_rrt'),
-    }, 
-    {
-        'name': 'decoupled_rrt',
-        'executable': str(project_root / 'build' / 'geometric_decoupled_rrt'),
-    }
-    ]
+    summary_file = project_root / 'experiments' / 'results' / args.output
 
-    summary_file = project_root / 'experiments' / 'results' / 'summary.csv'
-
-    # Write header to summary file if it doesn't exist or if we're overwriting results
-    if summary_file.exists() and not overwrite_results:
+    if summary_file.exists() and not args.overwrite:
         print(f"Summary file {summary_file} already exists. Appending results.")
     else:
         with open(summary_file, 'w') as f:
-            f.write("method,robots,seed,solved,planning_time,timed_out,makespan,sum_of_costs\n")
+            f.write("method,scenario,robots,seed,solved,planning_time,timed_out,makespan,sum_of_costs\n")
 
-    for scenario in scenarios:
+    for scenario in args.scenarios:
         for method in methods:
             run_method(
                 method['name'],
+                scenario,
                 method['executable'],
                 str(project_root / 'experiments' / scenario / scenario),
                 str(project_root / 'experiments' / 'results' / scenario / f'{method["name"]}'),
                 str(project_root / 'examples' / 'config' / f'{method["name"]}.yaml'),
-                timeout=600,  # 10 minutes
-                num_robots=[2, 4, 8, 16],
-                num_seeds=10,
+                timeout=args.timeout,
+                num_robots=args.robots,
+                num_seeds=args.seeds,
                 summary_file=summary_file,
                 base_output_dir=project_root
             )

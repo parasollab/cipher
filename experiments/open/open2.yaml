@@ -1,0 +1,13 @@
+environment:
+  min: [0.0, 0.0]
+  max: [30.0, 30.0]
+  obstacles: []
+
+robots:
+  - type: unicycle_first_order_0_sphere
+    start: [2.5, 3.3, 0.0] # [x, y, theta]
+    goal: [27.5, 3.3, 0.0]
+
+  - type: unicycle_first_order_0_sphere
+    start: [27.5, 3.3, 0.0]
+    goal: [2.5, 3.3, 0.0]

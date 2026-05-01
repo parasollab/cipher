@@ -15,7 +15,7 @@
 # ==============================================================================
 
 # Goal distance threshold - robots must reach within this distance of their goals
-goal_threshold: 0.5
+goal_threshold: 1.0
 
 # ==============================================================================
 # Subproblem Configuration
@@ -70,3 +70,5 @@ states_per_check: 10
 # Maximum number of conflicts to resolve before giving up
 # Prevents infinite loops in pathological cases
 max_conflicts_resolved: 100
+
+timelimit: 600

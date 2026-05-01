@@ -8,6 +8,8 @@
 // OMPL base headers
 #include <ompl/base/goals/GoalRegion.h>
 #include <ompl/base/spaces/SE2StateSpace.h>
+#include <ompl/base/spaces/RealVectorStateSpace.h>
+#include <ompl/base/StateSpace.h>
 #include <ompl/control/planners/rrt/RRT.h>
 
 // FCL
@@ -290,20 +292,18 @@ int main(int argc, char** argv)
 
         // Parse start state
         const auto& start_vec = robot_node["start"];
+        std::vector<double> start_reals;
+        for (const auto& v : start_vec) start_reals.push_back(v.as<double>());
         auto start_state = robot_si->getStateSpace()->allocState();
-        auto start_se2 = start_state->as<ob::SE2StateSpace::StateType>();
-        start_se2->setX(start_vec[0].as<double>());
-        start_se2->setY(start_vec[1].as<double>());
-        start_se2->setYaw(start_vec.size() > 2 ? start_vec[2].as<double>() : 0.0);
+        robot_si->getStateSpace()->copyFromReals(start_state, start_reals);
         start_states.push_back(start_state);
 
         // Parse goal state
         const auto& goal_vec = robot_node["goal"];
+        std::vector<double> goal_reals;
+        for (const auto& v : goal_vec) goal_reals.push_back(v.as<double>());
         auto goal_state = robot_si->getStateSpace()->allocState();
-        auto goal_se2 = goal_state->as<ob::SE2StateSpace::StateType>();
-        goal_se2->setX(goal_vec[0].as<double>());
-        goal_se2->setY(goal_vec[1].as<double>());
-        goal_se2->setYaw(goal_vec.size() > 2 ? goal_vec[2].as<double>() : 0.0);
+        robot_si->getStateSpace()->copyFromReals(goal_state, goal_reals);
         goal_states.push_back(goal_state);
 
         // Create problem definition for this robot
@@ -316,8 +316,8 @@ int main(int argc, char** argv)
         ma_si->addIndividual(robot_si);
         ma_pdef->addIndividual(pdef);
 
-        std::cout << "    Start: (" << start_se2->getX() << ", " << start_se2->getY() << ")" << std::endl;
-        std::cout << "    Goal:  (" << goal_se2->getX() << ", " << goal_se2->getY() << ")" << std::endl;
+        std::cout << "    Start: (" << start_reals[0] << ", " << start_reals[1] << ")" << std::endl;
+        std::cout << "    Goal:  (" << goal_reals[0]  << ", " << goal_reals[1]  << ")" << std::endl;
 
         robot_idx++;
     }
@@ -400,19 +400,18 @@ int main(int argc, char** argv)
 
                     // Extract states
                     YAML::Node states_node;
+                    auto robot_space = robot_sis[r]->getStateSpace();
                     for (size_t i = 0; i < robot_path->getStateCount(); ++i) {
                         const ob::State* robot_state = robot_path->getState(i);
                         if (!robot_state) {
                             std::cerr << "ERROR: null state at index " << i << " for robot " << r << std::endl;
                             break;
                         }
-                        const ob::SE2StateSpace::StateType* se2_state =
-                            robot_state->as<ob::SE2StateSpace::StateType>();
+                        std::vector<double> reals;
+                        robot_space->copyToReals(reals, robot_state);
 
                         YAML::Node state_node;
-                        state_node.push_back(se2_state->getX());
-                        state_node.push_back(se2_state->getY());
-                        state_node.push_back(se2_state->getYaw());
+                        for (double v : reals) state_node.push_back(v);
                         states_node.push_back(state_node);
                     }
                     robot_data["states"] = states_node;

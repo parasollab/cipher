@@ -1,6 +1,8 @@
 // OMPL base headers
 #include <ompl/base/goals/GoalRegion.h>
 #include <ompl/base/spaces/SE2StateSpace.h>
+#include <ompl/base/spaces/RealVectorStateSpace.h>
+#include <ompl/base/StateSpace.h>
 #include <ompl/base/PlannerTerminationCondition.h>
 #include <ompl/control/planners/rrt/RRT.h>
 #include <ompl/control/PathControl.h>
@@ -210,8 +212,8 @@ KinoCoupledRRTConfig loadConfigFromYAML(const std::string& configFile)
 
     try {
         YAML::Node cfg = YAML::LoadFile(configFile);
-        if (cfg["time_limit"]) {
-            config.time_limit = cfg["time_limit"].as<double>();
+        if (cfg["timelimit"]) {
+            config.time_limit = cfg["timelimit"].as<double>();
         }
         if (cfg["goal_threshold"]) {
             config.goal_threshold = cfg["goal_threshold"].as<double>();
@@ -518,11 +520,14 @@ int main(int argc, char** argv)
         for (size_t s = 0; s < path->getStateCount(); ++s) {
             const auto* compound = path->getState(s)->as<ob::CompoundState>();
             for (int r = 0; r < num_robots; ++r) {
-                const auto* se2 = compound->components[r]->as<ob::SE2StateSpace::StateType>();
+                const auto* cs = compound->components[r]->as<ob::CompoundStateSpace::StateType>();
+                const auto* pos = cs->as<ob::RealVectorStateSpace::StateType>(0);
+                const auto* vel = cs->as<ob::RealVectorStateSpace::StateType>(1);
                 YAML::Node state_node;
-                state_node.push_back(se2->getX());
-                state_node.push_back(se2->getY());
-                state_node.push_back(se2->getYaw());
+                state_node.push_back(pos->values[0]);
+                state_node.push_back(pos->values[1]);
+                state_node.push_back(vel->values[0]);
+                state_node.push_back(vel->values[1]);
                 robot_states[r].push_back(state_node);
             }
         }

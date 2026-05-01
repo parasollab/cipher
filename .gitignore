@@ -5,6 +5,7 @@ install/
 
 experiments/results/
 experiments/configs/
+experiments/plots/
 
 # Prerequisites
 *.d

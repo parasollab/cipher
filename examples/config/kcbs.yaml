@@ -1,0 +1,9 @@
+# Configuration file for main_kcbs (K-CBS with SST low-level planner)
+
+goal_epsilon: 1.0          # Distance threshold to consider goal reached
+goal_bias: 0.05            # Probability of sampling the goal during SST expansion
+selection_radius: 0.2      # delta_BN: radius for selecting nodes in SST
+pruning_radius: 0.1        # delta_s: radius for pruning nodes in SST
+propagation_step_size: 0.1 # Duration of each propagation step (seconds)
+control_duration: [1, 10]  # Min/max control duration (multiples of step size)
+ll_timelimit: 1            # Time limit for each low-level SST solve (seconds)
