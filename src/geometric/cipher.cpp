@@ -111,7 +111,7 @@ void CipherGeometricPlanner::vizEmitCoupledPlanning(
 }
 
 void CipherGeometricPlanner::vizEmitGridUpdate(
-    const std::vector<int>& removed_cell_ids,
+    const std::vector<std::string>& removed_viz_ids,
     const std::vector<std::tuple<std::string,
                                  std::vector<double>,
                                  std::vector<double>>>& new_cells)
@@ -119,9 +119,9 @@ void CipherGeometricPlanner::vizEmitGridUpdate(
     if (!do_viz_) return;
     YAML::Node ev;
     ev["type"] = "grid_update";
-    if (!removed_cell_ids.empty()) {
+    if (!removed_viz_ids.empty()) {
         YAML::Node removed;
-        for (int c : removed_cell_ids) removed.push_back("c" + std::to_string(c));
+        for (const std::string& id : removed_viz_ids) removed.push_back(id);
         ev["removed"] = removed;
     }
     YAML::Node cells_node;
@@ -137,7 +137,7 @@ void CipherGeometricPlanner::vizEmitGridUpdate(
     ev["cells"] = cells_node;
     viz_events_.push_back(ev);
     vizWriteFile();
-    std::cout << "[viz] grid_update event: " << removed_cell_ids.size()
+    std::cout << "[viz] grid_update event: " << removed_viz_ids.size()
               << " removed, " << new_cells.size() << " added" << std::endl;
 }
 
@@ -665,6 +665,11 @@ void CipherGeometricPlanner::setupDecomposition() {
     auto decomp = std::make_shared<GridDecompositionImpl>(2, workspace_bounds_, config_.decomposition_region_length);
     decomp->setStateSpace(robots_[0]->getSpaceInformation()->getStateSpace());
     decomp_ = decomp;
+
+    // Seed the viz ID map: every initial coarse cell maps to "c{id}".
+    region_viz_id_.clear();
+    for (int r = 0; r < decomp_->getNumRegions(); ++r)
+        region_viz_id_[r] = "c" + std::to_string(r);
 }
 
 void CipherGeometricPlanner::setupCollisionManager() {
@@ -745,6 +750,7 @@ void CipherGeometricPlanner::cleanup() {
     resolution_stats_ = ResolutionStats();  // Reset resolution statistics
     robot_pair_conflict_counts_.clear();   // Reset cycle detection counters
     decomposition_hierarchy_.clear();       // Clear decomposition hierarchy
+    region_viz_id_.clear();                 // Reset viz ID map
 }
 
 // Private conflict checking helpers
@@ -1140,14 +1146,26 @@ bool CipherGeometricPlanner::refineExpandedRegion(
         config_.conflict_resolution_config.decomposition_subdivision_factor,
         refinement_level);
 
-    // Identify which cells in the expanded region are new (not yet refined at this level).
-    // Cells that have already been decomposed at the same or higher refinement level
-    // don't need a new sub-grid — their bounds are identical and recomputing them is wasted work.
+    // Identify which LEAF cells within expanded_regions need refinement at this level.
+    // We always descend to leaves so that higher refinement levels subdivide children
+    // of previously-refined cells rather than re-decomposing already-split parents.
+    auto grid_decomp = std::static_pointer_cast<GridDecompositionImpl>(decomp_);
+
+    std::function<void(int, std::vector<int>&)> collectLeaves = [&](int rid, std::vector<int>& out) {
+        if (!grid_decomp->hasDecomposed(rid)) { out.push_back(rid); return; }
+        for (int child : grid_decomp->getChildRegions(rid)) collectLeaves(child, out);
+    };
+
     std::vector<int> new_regions;
     for (int r : expanded_regions) {
-        auto it = region_refinement_level_.find(r);
-        if (it == region_refinement_level_.end() || it->second < refinement_level)
-            new_regions.push_back(r);
+        std::vector<int> leaves;
+        collectLeaves(r, leaves);
+        for (int leaf : leaves) {
+            auto it = region_refinement_level_.find(leaf);
+            if (it == region_refinement_level_.end() ||
+                (it->second.first == expansion_layer && it->second.second < refinement_level))
+                new_regions.push_back(leaf);
+        }
     }
 
     if (new_regions.empty()) {
@@ -1160,44 +1178,51 @@ bool CipherGeometricPlanner::refineExpandedRegion(
     std::cout << "        " << new_regions.size() << " new cell(s) to refine out of "
               << expanded_regions.size() << " total" << std::endl;
 
-    // Step 1: Refine the conflict cells in the global decomposition.
+    // Capture viz IDs of cells-to-remove BEFORE they are erased from region_viz_id_.
+    std::vector<std::string> removed_viz_ids;
+    for (int r : new_regions)
+        removed_viz_ids.push_back(region_viz_id_.count(r) ? region_viz_id_[r] : "c" + std::to_string(r));
+
+    // Step 1: Refine the leaf cells in the global decomposition.
     for (int r : new_regions)
         decomp_->Decompose(r);
 
     std::cout << "        Decomposed " << new_regions.size() << " cell(s) in global decomposition" << std::endl;
 
-    // Mark new cells as refined at this level so future same-level expansions skip them.
+    // Mark new cells as refined and register their children's viz IDs.
     for (int r : new_regions) {
-        region_refinement_level_[r] = refinement_level;
-        auto grid_decomp = std::static_pointer_cast<GridDecompositionImpl>(decomp_);
-        for (int child : grid_decomp->getChildRegions(r))
-            region_refinement_level_[child] = refinement_level;
+        region_refinement_level_[r] = {expansion_layer, refinement_level};
+        std::string parent_viz_id = region_viz_id_.count(r) ? region_viz_id_[r] : "c" + std::to_string(r);
+        region_viz_id_.erase(r);
+        for (int child : grid_decomp->getChildRegions(r)) {
+            region_refinement_level_[child] = {expansion_layer, refinement_level};
+            region_viz_id_[child] = parent_viz_id + "_" + std::to_string(child);
+        }
     }
 
-    // Step 2: Extract replanning bounds for the new cells only.
+    // Step 2: Extract replanning bounds using top-level expanded_regions.
+    // extractReplanningBoundsForExpandedRegion uses locateRegion() which returns
+    // top-level cell IDs, so we must pass expanded_regions (not the leaf new_regions).
     PathUpdateInfo update_info_1, update_info_2;
     if (!extractReplanningBoundsForExpandedRegion(
-            conflict, new_regions, update_info_1, update_info_2)) {
+            conflict, expanded_regions, update_info_1, update_info_2)) {
         std::cout << "        Failed to extract replanning bounds" << std::endl;
         return false;
     }
 
-    // Add refined decomp to viz file — only show new_regions being replaced,
-    // not cells that were already refined in a previous attempt.
+    // Add refined decomp to viz file — only show new_regions being replaced.
     if (do_viz_) {
-        auto grid_decomp = std::static_pointer_cast<GridDecompositionImpl>(decomp_);
-        std::vector<int> removed_ids(new_regions.begin(), new_regions.end());
         std::vector<std::tuple<std::string, std::vector<double>, std::vector<double>>> new_cells;
         for (int r : new_regions) {
             for (int child : grid_decomp->getChildRegions(r)) {
                 auto cb = decomp_->getCellBounds(child);
-                std::string cell_id = "c" + std::to_string(r) + "_" + std::to_string(child);
-                new_cells.emplace_back(cell_id,
+                // region_viz_id_[child] was set in the marking step above
+                new_cells.emplace_back(region_viz_id_[child],
                     std::vector<double>(cb.low.begin(), cb.low.end()),
                     std::vector<double>(cb.high.begin(), cb.high.end()));
             }
         }
-        vizEmitGridUpdate(removed_ids, new_cells);
+        vizEmitGridUpdate(removed_viz_ids, new_cells);
     }
 
     // Handle ROBOT_OBSTACLE collisions (robot_1 == robot_2) as a single-robot replan.
@@ -1304,10 +1329,10 @@ bool CipherGeometricPlanner::refineExpandedRegion(
     // Step 3: MAPF replanning on the refined decomposition (only for robots that need replanning)
     std::vector<std::vector<int>> local_high_level_paths;
     {
-        CBS mapf_solver(config_.mapf_config.region_capacity, config_.mapf_config.mapf_timeout,
-                    obstacles_, config_.mapf_config.max_obstacle_volume_percent);
-        // CBS mapf_solver(1, config_.mapf_config.mapf_timeout,
+        // CBS mapf_solver(config_.mapf_config.region_capacity, config_.mapf_config.mapf_timeout,
         //             obstacles_, config_.mapf_config.max_obstacle_volume_percent);
+        CBS mapf_solver(1, config_.mapf_config.mapf_timeout,
+                    obstacles_, config_.mapf_config.max_obstacle_volume_percent);
     
         for (size_t robot_idx = 0; robot_idx < replan_hl_starts.size(); ++robot_idx) {
             std::cout << "Robot " << robot_idx << " start region: " << decomp_->locateSubRegion(replan_hl_starts[robot_idx])
@@ -1323,7 +1348,20 @@ bool CipherGeometricPlanner::refineExpandedRegion(
         std::cout << "        MAPF failed" << std::endl;
         freeUpdateInfoStates(robot_1, robot_2, update_info_1, update_info_2);
         return false;
+    } else {
+        std::cout << "        MAPF succeeded, got high-level paths for " << local_high_level_paths.size() << " robot(s)" << std::endl;
+
+        // Debug print the high-level paths
+        for (size_t i = 0; i < local_high_level_paths.size(); ++i) {
+            std::cout << "  Robot " << replan_robot_indices[i] << " high-level path: ";
+            for (int sub_id : local_high_level_paths[i]) {
+                std::cout << sub_id << " ";
+            }
+            std::cout << std::endl;
+        }
     }
+
+
     for (size_t i = 0; i < replan_robot_indices.size(); ++i) {
         if (i >= local_high_level_paths.size() || local_high_level_paths[i].empty()) {
             std::cout << "        MAPF failed for robot " << replan_robot_indices[i] << std::endl;
@@ -1333,14 +1371,20 @@ bool CipherGeometricPlanner::refineExpandedRegion(
     }
 
     if (do_viz_) {
+        auto viz_id_for = [&](int sub_id) -> std::string {
+            auto it = region_viz_id_.find(sub_id);
+            return it != region_viz_id_.end() ? it->second : "c" + std::to_string(sub_id);
+        };
+
         YAML::Node ev;
         ev["type"] = "local_mapf";
         YAML::Node paths;
         for (size_t i = 0; i < replan_robot_indices.size(); ++i) {
             YAML::Node cell_ids;
             for (int sub_id : local_high_level_paths[i]) {
-                cell_ids.push_back("c" + std::to_string(sub_id));
-                std::cout << "r" + std::to_string(replan_robot_indices[i]) << ": c" << sub_id << std::endl;
+                std::string cid = viz_id_for(sub_id);
+                cell_ids.push_back(cid);
+                // std::cout << "r" + std::to_string(replan_robot_indices[i]) << ": " << cid << std::endl;
             }
             paths["r" + std::to_string(replan_robot_indices[i])] = cell_ids;
         }

@@ -51,8 +51,8 @@ std::vector<std::vector<int>> CBS::solve(
 
     // Find initial paths for all robots (no constraints)
     for (size_t i = 0; i < start_states.size(); ++i) {
-        int start_region = decomp->locateRegion(start_states[i]);
-        int goal_region = decomp->locateRegion(goal_states[i]);
+        int start_region = decomp->locateSubRegion(start_states[i]);
+        int goal_region = decomp->locateSubRegion(goal_states[i]);
 
 #ifdef CBS_DEBUG
         std::cout << "CBS: Planning initial path for robot " << i
@@ -175,18 +175,20 @@ std::vector<std::vector<int>> CBS::solve(
 
 RegionGraph CBS::buildRegionGraph(std::shared_ptr<DecompositionImpl> decomp)
 {
-    int num_regions = decomp->getNumRegions();
-    RegionGraph graph(num_regions);
+    int total = decomp->getTotalNumRegions();
+    RegionGraph graph(total);
 
     std::set<int> invalid = computeInvalidRegions(decomp);
 
-    for (int i = 0; i < num_regions; ++i) {
+    for (int i = 0; i < total; ++i) {
+        if (!decomp->isLeafRegion(i)) continue;
         if (invalid.count(i)) continue;
 
         std::vector<int> neighbors;
         decomp->getNeighbors(i, neighbors);
 
         for (int neighbor : neighbors) {
+            if (!decomp->isLeafRegion(neighbor)) continue;
             if (invalid.count(neighbor)) continue;
             EdgeProperty ep;
             ep.weight = 1.0;
@@ -203,8 +205,9 @@ std::set<int> CBS::computeInvalidRegions(std::shared_ptr<DecompositionImpl> deco
     if (obstacles_.empty() || max_obstacle_volume_percent_ >= 1.0)
         return invalid;
 
-    int num_regions = decomp->getNumRegions();
-    for (int i = 0; i < num_regions; ++i) {
+    int total = decomp->getTotalNumRegions();
+    for (int i = 0; i < total; ++i) {
+        if (!decomp->isLeafRegion(i)) continue;
         double region_vol = decomp->getRegionVolume(i);
         const auto bounds = decomp->getCellBounds(i);
 
@@ -395,8 +398,8 @@ std::vector<CTNode> CBS::generateChildNodes(
         }
 
         // Replan path for this robot with new constraint
-        int start_region = decomp->locateRegion(start_states[robot_id]);
-        int goal_region = decomp->locateRegion(goal_states[robot_id]);
+        int start_region = decomp->locateSubRegion(start_states[robot_id]);
+        int goal_region = decomp->locateSubRegion(goal_states[robot_id]);
 
         try {
             child.paths[robot_id] = findPathWithConstraints(

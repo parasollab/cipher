@@ -36,6 +36,13 @@ class DecompositionImpl {
     virtual void Decompose(int rid) = 0;
     virtual int getDecompositionDepth(int rid) const = 0;
     virtual int getMaxDecompositions(int rid, double minSideLength) const = 0;
+
+    // Returns the total number of regions including virtual sub-regions created
+    // by Decompose(). Base default is the same as getNumRegions().
+    virtual int getTotalNumRegions() const { return getNumRegions(); }
+
+    // Returns true if rid is a leaf region (has not been further decomposed).
+    virtual bool isLeafRegion(int rid) const { return true; }
 };
 
 #endif // DECOMPOSITION_IMPL_H

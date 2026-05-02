@@ -58,7 +58,13 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
     int getNumRegions() const override { return ompl::control::GridDecomposition::getNumRegions(); }
     int getDimension() const override { return ompl::control::GridDecomposition::getDimension(); }
     const ompl::base::RealVectorBounds& getBounds() const override { return ompl::control::GridDecomposition::getBounds(); }
-    double getRegionVolume(int rid) override { return ompl::control::GridDecomposition::getRegionVolume(rid); }
+    double getRegionVolume(int rid) override {
+        const auto& b = getBoundsForRegion(rid);
+        double vol = 1.0;
+        for (int i = 0; i < dimension_; ++i)
+            vol *= (b.high[i] - b.low[i]);
+        return vol;
+    }
     int locateRegion(const ompl::base::State* s) const override { return ompl::control::GridDecomposition::locateRegion(s); }
     void sampleFromRegion(int rid, ompl::RNG& rng, std::vector<double>& coord) const override { ompl::control::GridDecomposition::sampleFromRegion(rid, rng, coord); }
 
@@ -90,6 +96,9 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
     int getMaxDecompositions(int rid, double minSideLength) const override;
 
     int locateSubRegion(const ompl::base::State* s) const override;
+
+    int getTotalNumRegions() const override { return nextVirtualId_; }
+    bool isLeafRegion(int rid) const override { return !children_.count(rid); }
 
     // Set the robot state space so that project/sampleFullState work with any
     // state type (SE2, RealVector, etc.) via copyToReals/copyFromReals.

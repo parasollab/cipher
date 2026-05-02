@@ -343,10 +343,15 @@ private:
     // Hierarchical decomposition tracking
     std::vector<DecompositionCell> decomposition_hierarchy_;  // One cell per initial region
 
-    // Tracks the highest refinement_level that has been applied to each original region.
-    // Used to skip redundant sub-grid creation when a cell is included in a larger
-    // expanded region but was already decomposed at the same level.
-    std::unordered_map<int, int> region_refinement_level_;
+    // Tracks (expansion_layer, refinement_level) at which each leaf cell was last decomposed.
+    // A cell may only be re-decomposed within the same expansion_layer at a strictly higher
+    // refinement_level; cells refined in any earlier expansion_layer are never touched again.
+    std::unordered_map<int, std::pair<int,int>> region_refinement_level_;
+
+    // Maps every current leaf region integer ID → the viz cell ID string used in the
+    // YAML event log (e.g. 42 → "c17_42").  Populated at setup and updated on every
+    // Decompose() call so local_mapf events always emit IDs that viz.py recognises.
+    std::unordered_map<int, std::string> region_viz_id_;
 
     // Helper methods
     void setupDecomposition();
@@ -486,7 +491,7 @@ private:
     void vizEmitCoupledPlanning(const std::vector<size_t>& robot_indices,
                                 const std::vector<int>& cell_ids);
     // new_cells: (id_string, bounds_min, bounds_max) for each sub-cell created
-    void vizEmitGridUpdate(const std::vector<int>& removed_cell_ids,
+    void vizEmitGridUpdate(const std::vector<std::string>& removed_viz_ids,
                            const std::vector<std::tuple<std::string,
                                                         std::vector<double>,
                                                         std::vector<double>>>& new_cells);

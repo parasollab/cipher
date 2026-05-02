@@ -224,54 +224,86 @@ void GridDecompositionImpl::sampleFullState(const ompl::base::StateSamplerPtr& s
     }
 }
 
+// Returns true if two axis-aligned cells share a face (touch in exactly one
+// dimension, strictly overlap in all others).
+static bool spatiallyAdjacent(const ompl::base::RealVectorBounds& a,
+                               const ompl::base::RealVectorBounds& b,
+                               int dim)
+{
+    const double eps = 1e-9;
+    int touching = -1;
+    for (int i = 0; i < dim; ++i) {
+        bool touch_ab = std::abs(a.high[i] - b.low[i]) < eps;
+        bool touch_ba = std::abs(b.high[i] - a.low[i]) < eps;
+        if (touch_ab || touch_ba) {
+            if (touching >= 0) return false;  // touching in >1 dim = corner/edge only
+            touching = i;
+        } else {
+            // Must strictly overlap in this dimension
+            if (a.low[i] >= b.high[i] - eps || b.low[i] >= a.high[i] - eps)
+                return false;
+        }
+    }
+    return touching >= 0;
+}
+
 void GridDecompositionImpl::getNeighbors(int rid, std::vector<int>& neighbors) const
 {
     neighbors.clear();
 
-    if (dimension_ == 2)
+    if (children_.count(rid)) return;  // parent cell — not navigable
+
+    int base_count = ompl::control::GridDecomposition::getNumRegions();
+
+    // Fast path: use the grid formula when no sub-regions have been created and
+    // rid is an original-grid cell.
+    if (virtualBounds_.empty() && rid < base_count)
     {
-        // 2D grid: length_ x length_
-        int row = rid / length_;
-        int col = rid % length_;
-
-        // Cardinal directions only: up, down, left, right
-        const int drow[] = {-1, 1, 0, 0};
-        const int dcol[] = {0, 0, -1, 1};
-
-        for (int i = 0; i < 4; ++i)
+        if (dimension_ == 2)
         {
-            int nrow = row + drow[i];
-            int ncol = col + dcol[i];
-
-            if (nrow >= 0 && nrow < length_ && ncol >= 0 && ncol < length_)
-            {
-                neighbors.push_back(nrow * length_ + ncol);
+            int row = rid / length_;
+            int col = rid % length_;
+            const int drow[] = {-1, 1, 0, 0};
+            const int dcol[] = {0, 0, -1, 1};
+            for (int i = 0; i < 4; ++i) {
+                int nrow = row + drow[i];
+                int ncol = col + dcol[i];
+                if (nrow >= 0 && nrow < length_ && ncol >= 0 && ncol < length_)
+                    neighbors.push_back(nrow * length_ + ncol);
             }
         }
+        else if (dimension_ == 3)
+        {
+            int z = rid / (length_ * length_);
+            int y = (rid / length_) % length_;
+            int x = rid % length_;
+            const int dx[] = {-1, 1, 0, 0, 0, 0};
+            const int dy[] = {0, 0, -1, 1, 0, 0};
+            const int dz[] = {0, 0, 0, 0, -1, 1};
+            for (int i = 0; i < 6; ++i) {
+                int nx = x + dx[i];
+                int ny = y + dy[i];
+                int nz = z + dz[i];
+                if (nx >= 0 && nx < length_ && ny >= 0 && ny < length_ && nz >= 0 && nz < length_)
+                    neighbors.push_back(nz * length_ * length_ + ny * length_ + nx);
+            }
+        }
+        return;
     }
-    else if (dimension_ == 3)
-    {
-        // 3D grid: length_ x length_ x length_
-        int z = rid / (length_ * length_);
-        int y = (rid / length_) % length_;
-        int x = rid % length_;
 
-        // Cardinal directions only: ±x, ±y, ±z
-        const int dx[] = {-1, 1, 0, 0, 0, 0};
-        const int dy[] = {0, 0, -1, 1, 0, 0};
-        const int dz[] = {0, 0, 0, 0, -1, 1};
+    // Slow path: spatial adjacency — needed when sub-regions exist.
+    // Iterates all leaf cells and returns those that share a face with rid.
+    const auto& bounds = getBoundsForRegion(rid);
 
-        for (int i = 0; i < 6; ++i)
-        {
-            int nx = x + dx[i];
-            int ny = y + dy[i];
-            int nz = z + dz[i];
-
-            if (nx >= 0 && nx < length_ && ny >= 0 && ny < length_ && nz >= 0 && nz < length_)
-            {
-                neighbors.push_back(nz * length_ * length_ + ny * length_ + nx);
-            }
-        }
+    for (int i = 0; i < base_count; ++i) {
+        if (i == rid || children_.count(i)) continue;
+        if (spatiallyAdjacent(bounds, getBoundsForRegion(i), dimension_))
+            neighbors.push_back(i);
+    }
+    for (const auto& [vid, vbounds] : virtualBounds_) {
+        if (vid == rid || children_.count(vid)) continue;
+        if (spatiallyAdjacent(bounds, *vbounds, dimension_))
+            neighbors.push_back(vid);
     }
 }
 
