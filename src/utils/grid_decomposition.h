@@ -85,6 +85,8 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
 
     void Decompose(int rid) override;
 
+    int locateSubRegion(const ompl::base::State* s) const override;
+
     // Set the robot state space so that project/sampleFullState work with any
     // state type (SE2, RealVector, etc.) via copyToReals/copyFromReals.
     // When not set, falls back to the original SE2 hard-cast behaviour.

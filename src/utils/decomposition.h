@@ -21,6 +21,10 @@ class DecompositionImpl {
     virtual const ompl::base::RealVectorBounds& getBounds() const = 0;
     virtual double getRegionVolume(int rid) = 0;
     virtual int locateRegion(const ompl::base::State* s) const = 0;
+    // Like locateRegion, but recursively resolves into child sub-regions when
+    // the containing region has been decomposed. Returns the finest-grained
+    // region ID that contains s, or -1 if s is out of bounds.
+    virtual int locateSubRegion(const ompl::base::State* s) const { return locateRegion(s); }
     virtual void project(const ompl::base::State* s, std::vector<double>& coord) const = 0;
     virtual void getNeighbors(int rid, std::vector<int>& neighbors) const = 0;
     virtual void getAllNeighbors(int rid, std::vector<int>& neighbors) const = 0;

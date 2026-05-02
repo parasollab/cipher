@@ -319,6 +319,17 @@ void GridDecompositionImpl::getAllNeighbors(int rid, std::vector<int>& neighbors
 
 void GridDecompositionImpl::Decompose(int rid)
 {
+    // If this region has already been decomposed, recurse into its children.
+    if (children_.count(rid)) {
+        // std::cout << "Num children " << rid << ": " << children_[rid].size() << std::endl;
+        for (int child : children_.at(rid)) {
+            Decompose(child);
+            // std::cout << "Num children " << child << ": " << child << std::endl;
+        }
+        // std::cout << "Num children " << rid << ": " << children_[rid].size() << std::endl;
+        return;
+    }
+
     // Break the region into smaller subregions (split into 4 in 2D, 8 in 3D).
     // Works on both flat-grid IDs and virtual IDs from prior Decompose calls.
     const ompl::base::RealVectorBounds& parentBounds = getBoundsForRegion(rid);
@@ -353,4 +364,27 @@ void GridDecompositionImpl::Decompose(int rid)
     }
 
     children_[rid] = std::move(childIds);
+}
+
+int GridDecompositionImpl::locateSubRegion(const ompl::base::State* s) const
+{
+    int rid = locateRegion(s);
+    if (rid < 0) return -1;
+
+    // Walk down the decomposition tree until we reach a leaf.
+    while (children_.count(rid)) {
+        std::vector<double> coord;
+        project(s, coord);
+        int matched = -1;
+        for (int child : children_.at(rid)) {
+            const auto& cb = getBoundsForRegion(child);
+            bool inside = true;
+            for (int i = 0; i < dimension_ && inside; ++i)
+                inside = (coord[i] >= cb.low[i] && coord[i] < cb.high[i]);
+            if (inside) { matched = child; break; }
+        }
+        if (matched < 0) break;  // state on a boundary edge; return parent
+        rid = matched;
+    }
+    return rid;
 }

@@ -214,6 +214,8 @@ target_link_libraries(k_arc PRIVATE
   ${YAML_LIBRARIES}
   ${FCL_LIBRARIES}
   crocoddyl::crocoddyl
+  -L/opt/homebrew/lib
+  ipopt
 )
 
 enable_testing()

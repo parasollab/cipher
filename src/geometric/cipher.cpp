@@ -1160,25 +1160,19 @@ bool CipherGeometricPlanner::refineExpandedRegion(
     std::cout << "        " << new_regions.size() << " new cell(s) to refine out of "
               << expanded_regions.size() << " total" << std::endl;
 
-    // Step 1: Create a refined local decomposition covering only the new cells.
-    // Already-refined cells are skipped — their sub-grids are mathematically identical
-    // and re-creating them adds no value. Planning is constrained to new_regions;
-    // if the conflict can't be resolved within them, a higher refinement_level will
-    // include those cells again (since their stored level will be < the new level).
-    std::shared_ptr<DecompositionImpl> local_decomp;
+    // Step 1: Refine the conflict cells in the global decomposition.
+    for (int r : new_regions)
+        decomp_->Decompose(r);
 
-    if (new_regions.size() == 1) {
-        local_decomp = createLocalDecomposition(new_regions[0], subdivision_factor);
-    } else {
-        local_decomp = createMultiCellDecomposition(new_regions, subdivision_factor);
-    }
-
-    std::cout << "        Created local decomposition with "
-              << local_decomp->getNumRegions() << " sub-regions" << std::endl;
+    std::cout << "        Decomposed " << new_regions.size() << " cell(s) in global decomposition" << std::endl;
 
     // Mark new cells as refined at this level so future same-level expansions skip them.
-    for (int r : new_regions)
+    for (int r : new_regions) {
         region_refinement_level_[r] = refinement_level;
+        auto grid_decomp = std::static_pointer_cast<GridDecompositionImpl>(decomp_);
+        for (int child : grid_decomp->getChildRegions(r))
+            region_refinement_level_[child] = refinement_level;
+    }
 
     // Step 2: Extract replanning bounds for the new cells only.
     PathUpdateInfo update_info_1, update_info_2;
@@ -1190,16 +1184,18 @@ bool CipherGeometricPlanner::refineExpandedRegion(
 
     // Add refined decomp to viz file — only show new_regions being replaced,
     // not cells that were already refined in a previous attempt.
-    if (do_viz_ && local_decomp) {
+    if (do_viz_) {
+        auto grid_decomp = std::static_pointer_cast<GridDecompositionImpl>(decomp_);
         std::vector<int> removed_ids(new_regions.begin(), new_regions.end());
         std::vector<std::tuple<std::string, std::vector<double>, std::vector<double>>> new_cells;
-        int n_sub = local_decomp->getNumRegions();
-        for (int i = 0; i < n_sub; ++i) {
-            auto cb = local_decomp->getCellBounds(i);
-            std::string cell_id = "c" + std::to_string(new_regions[0]) + "_" + std::to_string(i);
-            new_cells.emplace_back(cell_id,
-                std::vector<double>(cb.low.begin(), cb.low.end()),
-                std::vector<double>(cb.high.begin(), cb.high.end()));
+        for (int r : new_regions) {
+            for (int child : grid_decomp->getChildRegions(r)) {
+                auto cb = decomp_->getCellBounds(child);
+                std::string cell_id = "c" + std::to_string(r) + "_" + std::to_string(child);
+                new_cells.emplace_back(cell_id,
+                    std::vector<double>(cb.low.begin(), cb.low.end()),
+                    std::vector<double>(cb.high.begin(), cb.high.end()));
+            }
         }
         vizEmitGridUpdate(removed_ids, new_cells);
     }
@@ -1251,15 +1247,19 @@ bool CipherGeometricPlanner::refineExpandedRegion(
         std::cout << "        Robot " << robot_2 << " is stationary at goal, only replanning robot " << robot_1 << std::endl;
     }
 
+    std::vector<int> start_regions;
+    std::vector<int> goal_regions;
+
     // Validate that entry/exit states of robots to replan are within local decomposition bounds
     bool states_in_bounds = true;
     for (const auto* state : replan_starts) {
-        if (local_decomp->locateRegion(state) < 0) {
+        start_regions.push_back(decomp_->locateSubRegion(state));
+        if (start_regions.back() < 0) {
             states_in_bounds = false;
             std::cout << "        Entry state outside local decomposition bounds" << std::endl;
             std::cout << "Local Decomp Bounds: ";
-            for (size_t n =0; n < local_decomp->getBounds().low.size(); ++n) {
-                std::cout << "[" << local_decomp->getBounds().low[n] << ":" << local_decomp->getBounds().high[n] << "]";
+            for (size_t n =0; n < decomp_->getBounds().low.size(); ++n) {
+                std::cout << "[" << decomp_->getBounds().low[n] << ":" << decomp_->getBounds().high[n] << "]";
             }
             std::cout << "" <<std::endl;
             
@@ -1269,12 +1269,13 @@ bool CipherGeometricPlanner::refineExpandedRegion(
     }
     if (states_in_bounds) {
         for (const auto* state : replan_goals) {
-            if (local_decomp->locateRegion(state) < 0) {
+            goal_regions.push_back(decomp_->locateSubRegion(state));
+            if (goal_regions.back() < 0) {
                 states_in_bounds = false;
                 std::cout << "        Exit state outside local decomposition bounds" << std::endl;
                 std::cout << "Local Decomp Bounds: ";
-                for (size_t n =0; n < local_decomp->getBounds().low.size(); ++n) {
-                    std::cout << "[" << local_decomp->getBounds().low[n] << ":" << local_decomp->getBounds().high[n] << "]";
+                for (size_t n =0; n < decomp_->getBounds().low.size(); ++n) {
+                    std::cout << "[" << decomp_->getBounds().low[n] << ":" << decomp_->getBounds().high[n] << "]";
                 }
                 std::cout << "" <<std::endl;
                 robots_[0]->getSpaceInformation()->getStateSpace()->printState(state, std::cout);
@@ -1283,7 +1284,19 @@ bool CipherGeometricPlanner::refineExpandedRegion(
         }
     }
 
+    std::set<int> sts(start_regions.begin(), start_regions.end());
+    std::set<int> gls(goal_regions.begin(), goal_regions.end());
     if (!states_in_bounds) {
+        freeUpdateInfoStates(robot_1, robot_2, update_info_1, update_info_2);
+        return false;
+    }
+    if (sts.size() != start_regions.size()) {
+        std::cout << "!!!Same starts!!!" << std::endl;
+        freeUpdateInfoStates(robot_1, robot_2, update_info_1, update_info_2);
+        return false;
+    }
+    if (gls.size() != goal_regions.size()) {
+        std::cout << "!!!Same goals!!!" << std::endl;
         freeUpdateInfoStates(robot_1, robot_2, update_info_1, update_info_2);
         return false;
     }
@@ -1291,17 +1304,19 @@ bool CipherGeometricPlanner::refineExpandedRegion(
     // Step 3: MAPF replanning on the refined decomposition (only for robots that need replanning)
     std::vector<std::vector<int>> local_high_level_paths;
     {
-        CBS mapf_solver(1, config_.mapf_config.mapf_timeout,
+        CBS mapf_solver(config_.mapf_config.region_capacity, config_.mapf_config.mapf_timeout,
                     obstacles_, config_.mapf_config.max_obstacle_volume_percent);
+        // CBS mapf_solver(1, config_.mapf_config.mapf_timeout,
+        //             obstacles_, config_.mapf_config.max_obstacle_volume_percent);
     
         for (size_t robot_idx = 0; robot_idx < replan_hl_starts.size(); ++robot_idx) {
-            std::cout << "Robot " << robot_idx << " start region: " << local_decomp->locateRegion(replan_hl_starts[robot_idx])
-                << " -> end region: " << local_decomp->locateRegion(replan_hl_goals[robot_idx]) << std::endl;
+            std::cout << "Robot " << robot_idx << " start region: " << decomp_->locateSubRegion(replan_hl_starts[robot_idx])
+                << " -> end region: " << decomp_->locateSubRegion(replan_hl_goals[robot_idx]) << std::endl;
 
         }
 
         local_high_level_paths = mapf_solver.solve(
-            local_decomp, replan_hl_starts, replan_hl_goals);
+            decomp_, replan_hl_starts, replan_hl_goals);
     }
 
     if (local_high_level_paths.empty()) {
@@ -1321,12 +1336,11 @@ bool CipherGeometricPlanner::refineExpandedRegion(
         YAML::Node ev;
         ev["type"] = "local_mapf";
         YAML::Node paths;
-        std::string id_prefix = "c" + std::to_string(expanded_regions[0]) + "_";
         for (size_t i = 0; i < replan_robot_indices.size(); ++i) {
             YAML::Node cell_ids;
             for (int sub_id : local_high_level_paths[i]) {
-                cell_ids.push_back(id_prefix + std::to_string(sub_id));
-                std::cout << "r" + std::to_string(replan_robot_indices[i]) << ": " << id_prefix + std::to_string(sub_id) << std::endl;
+                cell_ids.push_back("c" + std::to_string(sub_id));
+                std::cout << "r" + std::to_string(replan_robot_indices[i]) << ": c" << sub_id << std::endl;
             }
             paths["r" + std::to_string(replan_robot_indices[i])] = cell_ids;
         }
@@ -1357,14 +1371,14 @@ bool CipherGeometricPlanner::refineExpandedRegion(
 
             auto planner = std::make_shared<GuidedGeometricRRT>(robot_si);
             planner->setIntermediateStates(true);
-            planner->setDecomposition(local_decomp);
+            planner->setDecomposition(decomp_);
             planner->setDecompositionPath(local_high_level_paths[i]);
             planner->setProblemDefinition(pdef);
             planner->setup();
 
-            ob::PlannerStatus status;
-            // ob::PlannerStatus status = planner->solve(
-            //     ob::timedPlannerTerminationCondition(config_.planning_time_limit));
+            // ob::PlannerStatus status;
+            ob::PlannerStatus status = planner->solve(
+                ob::timedPlannerTerminationCondition(config_.planning_time_limit));
         
             if (status == ob::PlannerStatus::EXACT_SOLUTION ||
                 status == ob::PlannerStatus::APPROXIMATE_SOLUTION) {
@@ -1383,7 +1397,7 @@ bool CipherGeometricPlanner::refineExpandedRegion(
 
             // GuidedPlanningResult result = guided_planner->solve(
             //     robots_[robot_idx],
-            //     local_decomp,
+            //     decomp_,
             //     replan_starts[i],
             //     replan_goals[i],
             //     local_high_level_paths[i],
@@ -1512,11 +1526,11 @@ std::shared_ptr<DecompositionImpl> CipherGeometricPlanner::createLocalDecomposit
 
     // Single original cell: sf sub-cells per dimension (square cell → square sub-cells)
     auto space = robots_[0]->getSpaceInformation()->getStateSpace();
-    auto local_decomp = std::make_shared<RectGridDecompositionImpl>(
+    auto decomp_ = std::make_shared<RectGridDecompositionImpl>(
         std::vector<int>(dim, sf), local_bounds, space);
 
-    recordRefinement(parent_region, local_decomp);
-    return local_decomp;
+    recordRefinement(parent_region, decomp_);
+    return decomp_;
 }
 
 std::shared_ptr<DecompositionImpl> CipherGeometricPlanner::createMultiCellDecomposition(
@@ -1847,7 +1861,7 @@ DecompositionCell* CipherGeometricPlanner::findCellByRegionRecursive(Decompositi
     return nullptr;
 }
 
-void CipherGeometricPlanner::recordRefinement(int parent_region, const std::shared_ptr<DecompositionImpl> local_decomp) {
+void CipherGeometricPlanner::recordRefinement(int parent_region, const std::shared_ptr<DecompositionImpl> decomp_) {
     std::cout << "Recording refinement in decomposition hierarchy..." << std::endl;
 }
 

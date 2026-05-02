@@ -457,20 +457,35 @@ class Visualizer:
             centers = []
             for cid in cell_ids:
                 cell = self.cells.get(cid)
-                if cell is None:
-                    print(f'Warning: local_mapf references unknown cell "{cid}"',
-                          file=sys.stderr)
-                    continue
-                # Stronger alpha + solid outline so local paths stand out over
-                # the global MAPF fill.
-                fills.append(self._fill_cell(cell['bounds']['min'],
-                                             cell['bounds']['max'],
-                                             color, alpha=0.40))
-                arts = self._draw_cell_edges(
-                    cell['bounds']['min'], cell['bounds']['max'],
-                    color, lw=2.0)
-                fills.extend(arts)
-                centers.append(self._cell_center(cell))
+                if cell is not None:
+                    # Cell exists directly — draw it.
+                    target_cells = [cell]
+                else:
+                    # Cell was refined away by a grid_update.  Show all
+                    # sub-cells (naming convention: "{parent}_{child_id}").
+                    prefix = cid + '_'
+                    target_cells = [c for k, c in self.cells.items()
+                                    if k.startswith(prefix)]
+                    if not target_cells:
+                        # Last resort: use original coarse bounds.
+                        fallback = self._initial_cells.get(cid)
+                        if fallback is None:
+                            print(f'Warning: local_mapf references unknown cell "{cid}"',
+                                  file=sys.stderr)
+                            continue
+                        target_cells = [fallback]
+
+                for tc in target_cells:
+                    # Stronger alpha + solid outline so local paths stand out
+                    # over the global MAPF fill.
+                    fills.append(self._fill_cell(tc['bounds']['min'],
+                                                 tc['bounds']['max'],
+                                                 color, alpha=0.40))
+                    arts = self._draw_cell_edges(
+                        tc['bounds']['min'], tc['bounds']['max'],
+                        color, lw=2.0)
+                    fills.extend(arts)
+                    centers.append(self._cell_center(tc))
             if len(centers) >= 2:
                 lines.append(self._draw_mapf_line(centers, color))
 
