@@ -84,6 +84,8 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
     void getAllNeighbors(int rid, std::vector<int>& neighbors) const override;
 
     void Decompose(int rid) override;
+    int getDecompositionDepth(int rid) const override;
+    int getMaxDecompositions(int rid, double minSideLength) const override;
 
     int locateSubRegion(const ompl::base::State* s) const override;
 
@@ -111,6 +113,7 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
   private:
     int nextVirtualId_;
     std::unordered_map<int, std::vector<int>> children_;
+    std::unordered_map<int, int> parent_;
     std::unordered_map<int, std::shared_ptr<ompl::base::RealVectorBounds>> virtualBounds_;
     ompl::base::StateSpacePtr state_space_;  // optional; enables generic project/sampleFullState
 };

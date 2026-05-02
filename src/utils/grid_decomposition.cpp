@@ -140,6 +140,7 @@ void RectGridDecompositionImpl::sampleFullState(const ompl::base::StateSamplerPt
     for (int i = 0; i < dim_; ++i) reals[i] = coord[i];
     state_space_->copyFromReals(s, reals);
 }
+#include <limits>
 
 static int computeLength(int dim, const ompl::base::RealVectorBounds& bounds, double region_size)
 {
@@ -360,6 +361,7 @@ void GridDecompositionImpl::Decompose(int rid)
         }
         int childId = nextVirtualId_++;
         virtualBounds_[childId] = std::move(sb);
+        parent_[childId] = rid;
         childIds.push_back(childId);
     }
 
@@ -387,4 +389,32 @@ int GridDecompositionImpl::locateSubRegion(const ompl::base::State* s) const
         rid = matched;
     }
     return rid;
+}
+
+int GridDecompositionImpl::getDecompositionDepth(int rid) const
+{
+    int depth = 0;
+    int current = rid;
+    while (parent_.count(current))
+    {
+        current = parent_.at(current);
+        ++depth;
+    }
+    return depth;
+}
+
+int GridDecompositionImpl::getMaxDecompositions(int rid, double minSideLength) const
+{
+    const auto& bounds = getBoundsForRegion(rid);
+    double minSide = std::numeric_limits<double>::max();
+    for (int i = 0; i < dimension_; ++i)
+        minSide = std::min(minSide, bounds.high[i] - bounds.low[i]);
+    int n = 0;
+    double side = minSide / 2.0;
+    while (side > minSideLength)
+    {
+        ++n;
+        side /= 2.0;
+    }
+    return n;
 }
