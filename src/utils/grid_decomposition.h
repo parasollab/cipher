@@ -32,6 +32,8 @@ class RectGridDecompositionImpl : public DecompositionImpl {
                          const std::vector<double>& coord, ompl::base::State* s) const override;
     ompl::base::RealVectorBounds getCellBounds(int rid) const override;
     void Decompose(int rid) override {}  // not needed for local refinement decomps
+    int getDecompositionDepth(int /*rid*/) const override { return 0; }
+    int getMaxDecompositions(int /*rid*/, double /*minSideLength*/) const override { return 0; }
 
   private:
     int dim_;
