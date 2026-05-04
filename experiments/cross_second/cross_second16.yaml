@@ -3,80 +3,80 @@ environment:
   max: [30.0, 30.0]
   obstacles:
     - type: box
-      center: [8, 8]
-      size: [12, 12]
+      center: [7.65625, 7.65625]
+      size: [14.0625, 14.0625]
     - type: box
-      center: [22, 8]
-      size: [12, 12]
+      center: [22.34375, 7.65625]
+      size: [14.0625, 14.0625]
     - type: box
-      center: [8, 22]
-      size: [12, 12]
+      center: [7.65625, 22.34375]
+      size: [14.0625, 14.0625]
     - type: box
-      center: [22, 22]
-      size: [12, 12]
+      center: [22.34375, 22.34375]
+      size: [14.0625, 14.0625]
 
 robots:
   - type: unicycle_second_order_0
-    start: [6, 1, 0.0, 0.0] # [x, y, theta, velocity]
-    goal: [6, 29, 0.0, 0.0]
+    start: [6, .3125, 0.0, 0.0] # [x, y, theta, velocity]
+    goal: [6, 29.6875, 0.0, 0.0]
 
   - type: unicycle_second_order_0
-    start: [6, 29, 0.0, 0.0]
-    goal: [6, 1, 0.0, 0.0]
+    start: [6, 29.6875, 0.0, 0.0]
+    goal: [6, .3125, 0.0, 0.0]
 
   - type: unicycle_second_order_0
-    start: [12, 1, 0.0, 0.0]
-    goal: [12, 29, 0.0, 0.0]
+    start: [12, .3125, 0.0, 0.0]
+    goal: [12, 29.6875, 0.0, 0.0]
 
   - type: unicycle_second_order_0
-    start: [12, 29, 0.0, 0.0]
-    goal: [12, 1, 0.0, 0.0]
+    start: [12, 29.6875, 0.0, 0.0]
+    goal: [12, .3125, 0.0, 0.0]
 
   - type: unicycle_second_order_0
-    start: [18, 1, 0.0, 0.0]
-    goal: [18, 29, 0.0, 0.0]
+    start: [18, .3125, 0.0, 0.0]
+    goal: [18, 29.6875, 0.0, 0.0]
 
   - type: unicycle_second_order_0
-    start: [18, 29, 0.0, 0.0]
-    goal: [18, 1, 0.0, 0.0]
+    start: [18, 29.6875, 0.0, 0.0]
+    goal: [18, .3125, 0.0, 0.0]
 
   - type: unicycle_second_order_0
-    start: [24, 1, 0.0, 0.0]
-    goal: [24, 29, 0.0, 0.0]
+    start: [24, .3125, 0.0, 0.0]
+    goal: [24, 29.6875, 0.0, 0.0]
 
   - type: unicycle_second_order_0
-    start: [24, 29, 0.0, 0.0]
-    goal: [24, 1, 0.0, 0.0]
+    start: [24, 29.6875, 0.0, 0.0]
+    goal: [24, .3125, 0.0, 0.0]
 
   - type: unicycle_second_order_0
-    start: [1, 6, 0.0, 0.0]
-    goal: [29, 6, 0.0, 0.0]
+    start: [.3125, 6, 1.5708, 0.0]
+    goal: [29.6875, 6, 1.5708, 0.0]
 
   - type: unicycle_second_order_0
-    start: [29, 6, 0.0, 0.0]
-    goal: [1, 6, 0.0, 0.0]
+    start: [29.6875, 6, 1.5708, 0.0]
+    goal: [.3125, 6, 1.5708, 0.0]
 
   - type: unicycle_second_order_0
-    start: [1, 12, 0.0, 0.0]
-    goal: [29, 12, 0.0, 0.0]
+    start: [.3125, 12, 1.5708, 0.0]
+    goal: [29.6875, 12, 1.5708, 0.0]
 
   - type: unicycle_second_order_0
-    start: [29, 12, 0.0, 0.0]
-    goal: [1, 12, 0.0, 0.0]
+    start: [29.6875, 12, 1.5708, 0.0]
+    goal: [.3125, 12, 1.5708, 0.0]
 
   - type: unicycle_second_order_0
-    start: [1, 18, 0.0, 0.0]
-    goal: [29, 18, 0.0, 0.0]
+    start: [.3125, 18, 1.5708, 0.0]
+    goal: [29.6875, 18, 1.5708, 0.0]
 
   - type: unicycle_second_order_0
-    start: [29, 18, 0.0, 0.0]
-    goal: [1, 18, 0.0, 0.0]
+    start: [29.6875, 18, 1.5708, 0.0]
+    goal: [.3125, 18, 1.5708, 0.0]
 
   - type: unicycle_second_order_0
-    start: [1, 24, 0.0, 0.0]
-    goal: [29, 24, 0.0, 0.0]
+    start: [.3125, 24, 1.5708, 0.0]
+    goal: [29.6875, 24, 1.5708, 0.0]
 
   - type: unicycle_second_order_0
-    start: [29, 24, 0.0, 0.0]
-    goal: [1, 24, 0.0, 0.0]
+    start: [29.6875, 24, 1.5708, 0.0]
+    goal: [.3125, 24, 1.5708, 0.0]
     

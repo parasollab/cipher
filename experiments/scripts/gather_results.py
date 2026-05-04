@@ -52,8 +52,21 @@ def gather_results(scenarios, methods, robots, seeds, output_file, timeout=600.0
                     with open(yaml_path, 'r') as f:
                         output = yaml.safe_load(f)
 
-                    solved = output.get('solved', output.get('success', False))
-                    planning_time = output.get('planning_time', timeout)
+                    solved = output.get('solved', output.get('success', None))
+                    if solved is None:
+                        solved = bool(output.get('result'))
+
+                    planning_time = output.get('planning_time')
+                    if planning_time is None:
+                        stats_path = yaml_path.parent / (yaml_path.stem + '_stats.yaml')
+                        if stats_path.exists():
+                            with open(stats_path) as sf:
+                                stats_data = yaml.safe_load(sf)
+                            entries = (stats_data or {}).get('stats') or []
+                            planning_time = entries[-1]['t'] if entries else timeout
+                        else:
+                            planning_time = timeout
+
                     timed_out = (not solved) and (planning_time >= timeout)
 
                     if solved:

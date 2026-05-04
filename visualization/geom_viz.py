@@ -62,8 +62,9 @@ _DEFAULT_GEOM = {'shape': 'sphere', 'radius': 0.2}
 # ---------------------------------------------------------------------------
 
 class GeomVisualizer:
-    def __init__(self, env_path, output_path=None, anim_speed=1.0):
+    def __init__(self, env_path, output_path=None, anim_speed=1.0, save_mp4=None):
         self.anim_speed = anim_speed
+        self.save_mp4 = save_mp4
         self._advance_flag = False
 
         # Load environment
@@ -324,15 +325,53 @@ class GeomVisualizer:
             except Exception:
                 pass
 
+    def _save_mp4(self, path):
+        from matplotlib.animation import FuncAnimation, FFMpegWriter
+
+        robot_geoms = [
+            ROBOT_GEOMETRY.get(rc.get('type', ''), _DEFAULT_GEOM)
+            for rc in self.robots_cfg
+        ]
+        active_patches = {}
+
+        def update(step):
+            for i, path in enumerate(self.paths):
+                color = ROBOT_COLORS[i % len(ROBOT_COLORS)]
+                state = path[min(step, len(path) - 1)]
+                x, y = state[0], state[1]
+                yaw = state[2] if len(state) > 2 else 0.0
+                geom = robot_geoms[i] if i < len(robot_geoms) else _DEFAULT_GEOM
+                if i in active_patches:
+                    try:
+                        active_patches[i].remove()
+                    except Exception:
+                        pass
+                patch = self._make_robot_patch(geom, x, y, yaw, color)
+                self.ax.add_patch(patch)
+                active_patches[i] = patch
+            return list(active_patches.values())
+
+        fps = ANIM_FPS * self.anim_speed
+        anim = FuncAnimation(
+            self.fig, update, frames=self.total_steps,
+            interval=1000.0 / fps, blit=False,
+        )
+        print(f'Saving animation to {path} ...', flush=True)
+        anim.save(path, writer=FFMpegWriter(fps=fps))
+        print('Done.', flush=True)
+
     # ------------------------------------------------------------------
     # Run
     # ------------------------------------------------------------------
 
     def run(self):
         if self.paths:
-            self._animate()
-            self.fig.suptitle('Done — close window to exit.', fontsize=10, y=0.99)
-            plt.draw()
+            if self.save_mp4:
+                self._save_mp4(self.save_mp4)
+            else:
+                self._animate()
+                self.fig.suptitle('Done — close window to exit.', fontsize=10, y=0.99)
+                plt.draw()
         plt.show()
 
 
@@ -349,12 +388,14 @@ def parse_args():
                    help='Path to planner output YAML (optional; omit to show env only)')
     p.add_argument('--anim-speed', type=float, default=1.0,
                    help='Animation playback speed multiplier (default: 1.0)')
+    p.add_argument('--save-mp4', metavar='FILE', default=None,
+                   help='Save animation to FILE (e.g. out.mp4) instead of showing interactively')
     return p.parse_args()
 
 
 def main():
     args = parse_args()
-    viz = GeomVisualizer(args.env, args.output, anim_speed=args.anim_speed)
+    viz = GeomVisualizer(args.env, args.output, anim_speed=args.anim_speed, save_mp4=args.save_mp4)
     viz.run()
 
 
