@@ -277,6 +277,9 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
         result.failure_reason = std::string("exception: ") + e.what();
     }
 
+    result.planning_time = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - planning_start_time_).count();
+    result.resolution_stats = resolution_stats_;
     return result;
 }
 
