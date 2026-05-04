@@ -159,6 +159,7 @@ struct PathUpdateInfo {
     size_t robot_index;
     int start_timestep;            // first timestep inside the expanded region
     int end_timestep;              // first timestep outside the expanded region
+    int planning_entry_timestep;   // timestep of planning_entry_state (last timestep outside region before entry, or 0)
     size_t start_segment_idx;
     size_t end_segment_idx;
     ob::State* region_entry_state;  // first state inside the expanded region
@@ -456,7 +457,9 @@ private:
         const PathUpdateInfo& update_info_1,
         const PathUpdateInfo& update_info_2);
     void recheckConflictsFromTimestep(int start_timestep);
-    int getRecheckStartTimestep(const SegmentConflict& conflict);
+    int getRecheckStartTimestep(const SegmentConflict& conflict,
+                                const PathUpdateInfo& update_info_1,
+                                const PathUpdateInfo& update_info_2);
     void segmentSinglePath(
         size_t robot_idx,
         const std::shared_ptr<og::PathGeometric>& path,

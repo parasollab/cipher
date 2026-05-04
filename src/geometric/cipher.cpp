@@ -252,22 +252,22 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
 
         // Phase 4: Resolve conflicts 
         if (conflicts_found) {
-            std::cout << "[Phase 5] Resolving collisions..." << std::endl;
-            bool collisions_resolved = resolveConflicts();
-            if (!collisions_resolved) {
-                std::cerr << "Planning failed: could not resolve all collisions" << std::endl;
+            std::cout << "[Phase 5] Resolving conflicts..." << std::endl;
+            bool conflicts_resolved = resolveConflicts();
+            if (!conflicts_resolved) {
+                std::cerr << "Planning failed: could not resolve all conflicts" << std::endl;
                 result.success = false;
                 if (isTimeoutExceeded()) {
-                    result.failure_reason = "timeout_collision_resolution";
+                    result.failure_reason = "timeout_conflict_resolution";
                 } else {
                     result.failure_reason = "strategies_exhausted";
                 }
             } else {
-                std::cout << "[Phase 5] All collisions resolved" << std::endl;
+                std::cout << "[Phase 5] All conflicts resolved" << std::endl;
                 result.success = true;
             }
         } else {
-            std::cout << "[Phase 5] No collisions to resolve" << std::endl;
+            std::cout << "[Phase 5] No conflicts to resolve" << std::endl;
             result.success = true;
         }
 
@@ -657,7 +657,7 @@ bool CipherGeometricPlanner::resolveConflicts() {
         resolution_stats_.total_conflicts_resolved++;
     }
 
-    std::cout << "All collisions resolved successfully after " << resolution_stats_.total_conflicts_resolved << " collision resolutions" << std::endl;
+    std::cout << "All conflicts resolved successfully after " << resolution_stats_.total_conflicts_resolved << " conflict resolutions" << std::endl;
     return true;
 }
 
@@ -901,7 +901,7 @@ bool CipherGeometricPlanner::resolveConflictWithStrategies(const SegmentConflict
     // Strategy 1: Hierarchical Expansion + Refinement
     // This combines the old decomposition refinement and subproblem expansion into one
     // unified hierarchical approach:
-    // - expansion_layer=0: refine just the collision cell (K times)
+    // - expansion_layer=0: refine just the conflict cell (K times)
     // - expansion_layer=1,2,...: expand to neighbors, then refine all cells (K times each)
     // - Continue until expansion covers the whole decomposition
     if (config.max_refinement_levels > 0) {
@@ -916,7 +916,7 @@ bool CipherGeometricPlanner::resolveConflictWithStrategies(const SegmentConflict
                 max_expansion_layers,
                 min_expansion_layer,
                 log_entry)) {
-            std::cout << "  Hierarchical expansion+refinement resolved the collision" << std::endl;
+            std::cout << "  Hierarchical expansion+refinement resolved the conflict" << std::endl;
             return true;
         }
 
@@ -934,7 +934,7 @@ bool CipherGeometricPlanner::resolveConflictWithStrategies(const SegmentConflict
     //     std::cout << "  Trying local composite planner (joint planning of colliding robots)..." << std::endl;
 
     //     if (resolveWithLocalCompositePlanner(conflict, log_entry)) {
-    //         std::cout << "  Local composite planner resolved the collision" << std::endl;
+    //         std::cout << "  Local composite planner resolved the conflict" << std::endl;
     //         return true;
     //     }
 
@@ -960,11 +960,11 @@ bool CipherGeometricPlanner::resolveConflictWithStrategies(const SegmentConflict
         }
 
         std::cerr << "  Full-problem composite planner failed after " << config.max_composite_attempts
-                  << " attempts for collision at timestep " << conflict.timestep << std::endl;
+                  << " attempts for conflict at timestep " << conflict.timestep << std::endl;
     }
 
     // All strategies exhausted - conflict could not be resolved
-    std::cerr << "  All collision resolution strategies exhausted for conflict at timestep "
+    std::cerr << "  All conflict resolution strategies exhausted for conflict at timestep "
               << conflict.timestep << " between robots " << conflict.robot_index_1
               << " and " << conflict.robot_index_2 << std::endl;
     return false;
@@ -1261,7 +1261,7 @@ bool CipherGeometricPlanner::refineExpandedRegion(
         vizEmitGridUpdate(removed_viz_ids, new_cells);
     }
 
-    // Handle ROBOT_OBSTACLE collisions (robot_1 == robot_2) as a single-robot replan.
+    // Handle ROBOT_OBSTACLE conflicts (robot_1 == robot_2) as a single-robot replan.
     // Without this, the same robot would be replanned and integrated twice, corrupting the path.
     bool is_single_robot = (robot_1 == robot_2);
 
@@ -1558,7 +1558,7 @@ bool CipherGeometricPlanner::refineExpandedRegion(
 
     // Step 6: Re-check collisions
     {
-        recheckConflictsFromTimestep(getRecheckStartTimestep(conflict));
+        recheckConflictsFromTimestep(getRecheckStartTimestep(conflict, update_info_1, update_info_2));
     }
 
     freeUpdateInfoStates(robot_1, robot_2, update_info_1, update_info_2);
@@ -1711,13 +1711,13 @@ bool CipherGeometricPlanner::extractReplanningBounds(
 }
 
 bool CipherGeometricPlanner::extractReplanningBoundsForExpandedRegion(
-    const SegmentConflict& collision,
+    const SegmentConflict& conflict,
     const std::vector<int>& expanded_regions,
     PathUpdateInfo& update_info_1,
     PathUpdateInfo& update_info_2)
 {
-    size_t robot_1 = collision.robot_index_1;
-    size_t robot_2 = collision.robot_index_2;
+    size_t robot_1 = conflict.robot_index_1;
+    size_t robot_2 = conflict.robot_index_2;
 
     // Convert expanded_regions to a set for O(1) lookup
     std::set<int> region_set(expanded_regions.begin(), expanded_regions.end());
@@ -1729,16 +1729,16 @@ bool CipherGeometricPlanner::extractReplanningBoundsForExpandedRegion(
         auto si = robots_[robot_idx]->getSpaceInformation();
         ob::State* temp_state = si->getStateSpace()->allocState();
 
-        int collision_ts = collision.timestep;
+        int conflict_ts = conflict.timestep;
 
-        // Check if robot has finished its path before the collision timestep.
+        // Check if robot has finished its path before the conflict timestep.
         // In that case, the robot is stationary at its goal — no replanning needed.
         int path_end_timestep = 0;
         if (!path_segments_[robot_idx].empty()) {
             path_end_timestep = path_segments_[robot_idx].back().end_timestep;
         }
 
-        if (collision_ts >= path_end_timestep) {
+        if (conflict_ts >= path_end_timestep) {
             // Robot is stationary at goal — all three states collapse to the goal
             info.region_entry_state = si->getStateSpace()->allocState();
             info.region_exit_state = si->getStateSpace()->allocState();
@@ -1750,6 +1750,7 @@ bool CipherGeometricPlanner::extractReplanningBoundsForExpandedRegion(
             si->copyState(info.planning_exit_state, goal_states_[robot_idx]);
             info.start_timestep = path_end_timestep;
             info.end_timestep = path_end_timestep;
+            info.planning_entry_timestep = path_end_timestep;
             info.start_segment_idx = path_segments_[robot_idx].empty() ? 0 : path_segments_[robot_idx].size() - 1;
             info.end_segment_idx = info.start_segment_idx;
             si->getStateSpace()->freeState(temp_state);
@@ -1757,14 +1758,14 @@ bool CipherGeometricPlanner::extractReplanningBoundsForExpandedRegion(
             return true;
         }
 
-        // Find entry to expanded region (scan backwards from collision)
+        // Find entry to expanded region (scan backwards from conflict)
         int entry_timestep = 0;
         size_t entry_segment = 0;
         bool found_entry = false;
         int pre_entry_timestep = -1;
         size_t pre_entry_segment = 0;
 
-        for (int t = collision_ts; t >= 0; --t) {
+        for (int t = conflict_ts; t >= 0; --t) {
             const PathSegment* seg = findSegmentAtTimestep(robot_idx, t);
             if (!seg) break;
 
@@ -1800,14 +1801,14 @@ bool CipherGeometricPlanner::extractReplanningBoundsForExpandedRegion(
         size_t exit_segment = 0;
         bool found_exit = false;
 
-        int last_in_region_timestep = collision_ts;  // collision is inside by definition
+        int last_in_region_timestep = conflict_ts;  // conflict is inside by definition
         size_t last_in_region_segment = 0;
-        if (const PathSegment* s = findSegmentAtTimestep(robot_idx, collision_ts))
+        if (const PathSegment* s = findSegmentAtTimestep(robot_idx, conflict_ts))
             last_in_region_segment = s->segment_index;
 
         int max_timestep = path_end_timestep;
 
-        for (int t = collision_ts; t < max_timestep; ++t) {
+        for (int t = conflict_ts; t < max_timestep; ++t) {
             const PathSegment* seg = findSegmentAtTimestep(robot_idx, t);
             if (!seg) break;
 
@@ -1863,6 +1864,7 @@ bool CipherGeometricPlanner::extractReplanningBoundsForExpandedRegion(
 
         info.start_timestep = entry_timestep;
         info.end_timestep = exit_timestep;
+        info.planning_entry_timestep = (pre_entry_timestep >= 0) ? pre_entry_timestep : 0;
         info.start_segment_idx = entry_segment;
         info.end_segment_idx = exit_segment;
 
@@ -1993,11 +1995,113 @@ void CipherGeometricPlanner::integrateRefinedPaths(
 
 void CipherGeometricPlanner::recheckConflictsFromTimestep(int start_timestep) {
     std::cout << "Re-checking conflicts from timestep..." << std::endl;
+    std::cout << "    Re-checking conflicts from timestep " << start_timestep << std::endl;
+
+    // Clear all conflicts
+    segment_conflicts_.clear();
+
+    // Find the maximum timestep across all robots
+    int max_timestep = 0;
+    for (const auto& robot_segments : path_segments_) {
+        if (!robot_segments.empty()) {
+            max_timestep = std::max(max_timestep, robot_segments.back().end_timestep);
+        }
+    }
+
+    // Allocate states for each robot
+    std::vector<ob::State*> current_states(robots_.size(), nullptr);
+    for (size_t i = 0; i < robots_.size(); ++i) {
+        current_states[i] = robots_[i]->getSpaceInformation()->getStateSpace()->allocState();
+    }
+
+    // Check conflicts at each timestep
+    for (int timestep = start_timestep; timestep < max_timestep; ++timestep) {
+        // Propagate each robot to this timestep
+        for (size_t robot_idx = 0; robot_idx < robots_.size(); ++robot_idx) {
+            if (path_segments_[robot_idx].empty()) continue;
+
+            // Find the segment that contains this timestep for this robot
+            const PathSegment* seg = findSegmentAtTimestep(robot_idx, timestep);
+
+            if (seg != nullptr) {
+                propagateToTimestep(robot_idx, seg->segment_index, timestep,
+                                    current_states[robot_idx]);
+            } else {
+                // Robot's path has ended, use final state
+                const auto& last_segment = path_segments_[robot_idx].back();
+                robots_[robot_idx]->getSpaceInformation()->copyState(
+                    current_states[robot_idx], last_segment.end_state);
+            }
+        }
+
+        // Check robot-robot conflicts at this timestep
+        for (size_t i = 0; i < robots_.size(); ++i) {
+            if (path_segments_[i].empty()) continue;
+
+            for (size_t j = i + 1; j < robots_.size(); ++j) {
+                if (path_segments_[j].empty()) continue;
+
+                size_t part_i, part_j;
+                if (checkTwoRobotConflict(i, current_states[i], j,
+                                        current_states[j], part_i, part_j)) {
+                    // Found a conflict - record it and stop
+                    const PathSegment* seg_i = findSegmentAtTimestep(i, timestep);
+                    const PathSegment* seg_j = findSegmentAtTimestep(j, timestep);
+
+                    SegmentConflict coll;
+                    coll.type = SegmentConflict::ROBOT_ROBOT;
+                    coll.robot_index_1 = i;
+                    coll.robot_index_2 = j;
+                    coll.timestep = timestep;
+                    coll.part_index_1 = part_i;
+                    coll.part_index_2 = part_j;
+
+                    if (seg_i != nullptr) {
+                        coll.segment_index_1 = seg_i->segment_index;
+                    } else if (!path_segments_[i].empty()) {
+                        coll.segment_index_1 = path_segments_[i].size() - 1;
+                    }
+
+                    if (seg_j != nullptr) {
+                        coll.segment_index_2 = seg_j->segment_index;
+                    } else if (!path_segments_[j].empty()) {
+                        coll.segment_index_2 = path_segments_[j].size() - 1;
+                    }
+
+                    segment_conflicts_.push_back(coll);
+
+                    // Only report first conflict found
+                    std::cout << "    Found robot-robot conflict at timestep " << timestep << std::endl;
+                    goto cleanup;
+                }
+            }
+        }
+    }
+
+cleanup:
+    // Free allocated states
+    for (size_t i = 0; i < current_states.size(); ++i) {
+        if (current_states[i]) {
+            robots_[i]->getSpaceInformation()->getStateSpace()->freeState(current_states[i]);
+        }
+    }
+
+    std::cout << "    Total conflicts found: " << segment_conflicts_.size() << std::endl;
 }
 
-int CipherGeometricPlanner::getRecheckStartTimestep(const SegmentConflict& conflict) {
+int CipherGeometricPlanner::getRecheckStartTimestep(
+    const SegmentConflict& conflict,
+    const PathUpdateInfo& update_info_1,
+    const PathUpdateInfo& update_info_2) {
     std::cout << "Getting recheck start timestep..." << std::endl;
-    return 0;
+
+    int result = std::min(update_info_1.planning_entry_timestep,
+                          update_info_2.planning_entry_timestep);
+
+    std::cout << "    Recheck start: using planning_entry_timestep " << result
+              << " (conflict timestep was " << conflict.timestep << ")" << std::endl;
+
+    return result;
 }
 
 void CipherGeometricPlanner::segmentSinglePath(
@@ -2195,19 +2299,19 @@ bool CipherGeometricPlanner::resolveWithLocalCompositePlanner(
             integrateRefinedPaths(robot_indices, local_results, update_info_1, update_info_2);
         }
         {
-            recheckConflictsFromTimestep(getRecheckStartTimestep(conflict));
+            recheckConflictsFromTimestep(getRecheckStartTimestep(conflict, update_info_1, update_info_2));
         }
 
         // Check if the conflict is resolved
         if (!conflictPersistsForRobots(robot_1, robot_2, conflict.timestep)) {
-            std::cout << "    Local composite planner resolved the collision" << std::endl;
+            std::cout << "    Local composite planner resolved the conflict" << std::endl;
             attempt.conflict_resolved = true;
             log_entry.attempts.push_back(attempt);
             freeUpdateInfoStates(robot_1, robot_2, update_info_1, update_info_2);
             return true;
         }
 
-        std::cout << "    Local composite planner: collision persists after replanning" << std::endl;
+        std::cout << "    Local composite planner: conflict persists after replanning" << std::endl;
     } else {
         attempt.planning_succeeded = false;
         std::cout << "    Local composite planner failed to find solution" << std::endl;
