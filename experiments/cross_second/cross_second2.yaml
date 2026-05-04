@@ -3,23 +3,23 @@ environment:
   max: [30.0, 30.0]
   obstacles:
     - type: box
-      center: [8, 8]
-      size: [12, 12]
+      center: [7.65625, 7.65625]
+      size: [14.0625, 14.0625]
     - type: box
-      center: [22, 8]
-      size: [12, 12]
+      center: [22.34375, 7.65625]
+      size: [14.0625, 14.0625]
     - type: box
-      center: [8, 22]
-      size: [12, 12]
+      center: [7.65625, 22.34375]
+      size: [14.0625, 14.0625]
     - type: box
-      center: [22, 22]
-      size: [12, 12]
+      center: [22.34375, 22.34375]
+      size: [14.0625, 14.0625]
 
 robots:
   - type: unicycle_second_order_0
-    start: [6, 1, 0.0, 0.0] # [x, y, theta, velocity]
-    goal: [6, 29, 0.0, 0.0]
+    start: [6, .3125, 0.0, 0.0] # [x, y, theta, velocity]
+    goal: [6, 29.6875, 0.0, 0.0]
 
   - type: unicycle_second_order_0
-    start: [6, 29, 0.0, 0.0]
-    goal: [6, 1, 0.0, 0.0]
+    start: [6, 29.6875, 0.0, 0.0]
+    goal: [6, .3125, 0.0, 0.0]

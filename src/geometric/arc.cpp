@@ -20,7 +20,6 @@
 // OMPL - Geometric
 #include <ompl/geometric/PathGeometric.h>
 #include <ompl/geometric/SimpleSetup.h>
-#include <ompl/geometric/planners/prm/PRM.h>
 #include <ompl/geometric/planners/rrt/RRTConnect.h>
 
 // OMPL - Control (needed for propagator interface)
@@ -76,12 +75,8 @@ struct ARCConfig {
 
     // Planning hierarchy timeouts (for Algorithm 2)
     double prioritized_query_timeout = 1.0;
-    double decoupled_prm_timeout = 5.0;
-    double composite_prm_timeout = 10.0;
-
-    // Sampling parameters for PRM methods
-    int prm_samples = 1000;                // Number of samples for PRM
-    int prm_nearest_neighbors = 10;        // k-nearest neighbors for PRM
+    double decoupled_rrtconnect_timeout = 5.0;
+    double composite_rrtconnect_timeout = 10.0;
 
     // Path discretization (for collision checking)
     int states_per_check = 10;             // Number of states to interpolate between waypoints
@@ -230,8 +225,8 @@ private:
     // ========================================================================
 
     SubproblemSolution tryPrioritizedQuery(const Subproblem& subproblem);
-    SubproblemSolution tryDecoupledPRM(const Subproblem& subproblem);
-    SubproblemSolution tryCompositePRM(const Subproblem& subproblem);
+    SubproblemSolution tryDecoupledRRTConnect(const Subproblem& subproblem);
+    SubproblemSolution tryCompositeRRTConnect(const Subproblem& subproblem);
 
     // ========================================================================
     // Subproblem Management
@@ -496,7 +491,7 @@ void ARCPlanner::computeInitialPaths()
         goal->setThreshold(config_.goal_threshold);
         pdef->setGoal(goal);
 
-        // Create geometric planner (use RRTConnect for initial paths - faster than PRM)
+        // Create geometric planner
         auto planner = std::make_shared<og::RRTConnect>(si);
         planner->setProblemDefinition(pdef);
         planner->setup();
@@ -621,19 +616,19 @@ SubproblemSolution ARCPlanner::solveSubproblem(Subproblem& subproblem)
         return solution;
     }
 
-    // Level 2: Decoupled PRM
-    std::cout << "  Trying decoupled PRM..." << std::endl;
-    solution = tryDecoupledPRM(subproblem);
+    // Level 2: Decoupled RRTConnect
+    std::cout << "  Trying decoupled RRTConnect..." << std::endl;
+    solution = tryDecoupledRRTConnect(subproblem);
     if (solution.solved) {
-        solution.method_used = "DecoupledPRM";
+        solution.method_used = "DecoupledRRTConnect";
         return solution;
     }
 
-    // Level 3: Composite PRM (RRT in composite space)
-    std::cout << "  Trying composite PRM..." << std::endl;
-    solution = tryCompositePRM(subproblem);
+    // Level 3: Composite RRTConnect (in composite space)
+    std::cout << "  Trying composite RRTConnect..." << std::endl;
+    solution = tryCompositeRRTConnect(subproblem);
     if (solution.solved) {
-        solution.method_used = "CompositePRM";
+        solution.method_used = "CompositeRRTConnect";
         return solution;
     }
 
@@ -792,7 +787,7 @@ SubproblemSolution ARCPlanner::tryPrioritizedQuery(const Subproblem& subproblem)
     return solution;
 }
 
-SubproblemSolution ARCPlanner::tryDecoupledPRM(const Subproblem& subproblem)
+SubproblemSolution ARCPlanner::tryDecoupledRRTConnect(const Subproblem& subproblem)
 {
     auto start_time = std::chrono::steady_clock::now();
     SubproblemSolution solution;
@@ -904,13 +899,12 @@ SubproblemSolution ARCPlanner::tryDecoupledPRM(const Subproblem& subproblem)
         si->setStateValidityChecker(validity_checker);
         si->setup();
 
-        // Use PRM as per paper
-        auto planner = std::make_shared<og::PRM>(si);
+        auto planner = std::make_shared<og::RRTConnect>(si);
         planner->setProblemDefinition(pdef);
 
         // Solve with timeout
         ob::PlannerStatus solved = planner->solve(
-            ob::timedPlannerTerminationCondition(config_.decoupled_prm_timeout));
+            ob::timedPlannerTerminationCondition(config_.decoupled_rrtconnect_timeout));
 
         if (solved != ob::PlannerStatus::EXACT_SOLUTION) {
             // If any robot fails to plan, the whole method fails
@@ -938,7 +932,7 @@ SubproblemSolution ARCPlanner::tryDecoupledPRM(const Subproblem& subproblem)
     return solution;
 }
 
-SubproblemSolution ARCPlanner::tryCompositePRM(const Subproblem& subproblem)
+SubproblemSolution ARCPlanner::tryCompositeRRTConnect(const Subproblem& subproblem)
 {
     auto start_time = std::chrono::steady_clock::now();
     SubproblemSolution solution;
@@ -1088,13 +1082,13 @@ SubproblemSolution ARCPlanner::tryCompositePRM(const Subproblem& subproblem)
         goal->setThreshold(config_.goal_threshold);
         pdef->setGoal(goal);
 
-        // Step 8: Create and run PRM planner (as per paper)
-        auto planner = std::make_shared<og::PRM>(compound_si);
+        // Step 8: Create and run RRTConnect planner in composite space
+        auto planner = std::make_shared<og::RRTConnect>(compound_si);
         planner->setProblemDefinition(pdef);
         planner->setup();
 
         ob::PlannerStatus solved = planner->solve(
-            ob::timedPlannerTerminationCondition(config_.composite_prm_timeout));
+            ob::timedPlannerTerminationCondition(config_.composite_rrtconnect_timeout));
 
         if (solved && pdef->getSolutionPath()) {
             // Step 9: Extract compound geometric path
@@ -1128,7 +1122,7 @@ SubproblemSolution ARCPlanner::tryCompositePRM(const Subproblem& subproblem)
         compound_si->freeState(compound_goal);
 
     } catch (const std::exception& e) {
-        std::cerr << "  Composite PRM failed: " << e.what() << std::endl;
+        std::cerr << "  Composite RRTConnect failed: " << e.what() << std::endl;
         solution.solved = false;
     }
 
@@ -1680,11 +1674,11 @@ ARCConfig loadConfigFromYAML(const std::string& configFile)
         if (cfg["prioritized_query_timeout"]) {
             config.prioritized_query_timeout = cfg["prioritized_query_timeout"].as<double>();
         }
-        if (cfg["decoupled_prm_timeout"]) {
-            config.decoupled_prm_timeout = cfg["decoupled_prm_timeout"].as<double>();
+        if (cfg["decoupled_rrtconnect_timeout"]) {
+            config.decoupled_rrtconnect_timeout = cfg["decoupled_rrtconnect_timeout"].as<double>();
         }
-        if (cfg["composite_prm_timeout"]) {
-            config.composite_prm_timeout = cfg["composite_prm_timeout"].as<double>();
+        if (cfg["composite_rrtconnect_timeout"]) {
+            config.composite_rrtconnect_timeout = cfg["composite_rrtconnect_timeout"].as<double>();
         }
 
         // Discretization

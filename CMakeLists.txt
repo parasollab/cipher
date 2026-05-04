@@ -352,6 +352,31 @@ target_link_libraries(guided_geometric_rrt PRIVATE
   ${FCL_LIBRARIES}
 )
 
+add_executable(guided_geometric_rrt_connect
+  src/guided/main_guided_geometric_rrt_connect.cpp
+  src/mapf/cbs.cpp
+  src/utils/grid_decomposition.cpp
+  db-CBS/src/robots.cpp
+)
+target_include_directories(guided_geometric_rrt_connect PRIVATE
+  ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/src/guided
+  ${CMAKE_SOURCE_DIR}/src/mapf
+  ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_SOURCE_DIR}/db-CBS/src
+  ${YAML_INCLUDE_DIRS}
+  ${FCL_INCLUDE_DIRS}
+)
+target_link_directories(guided_geometric_rrt_connect PRIVATE ${YAML_LIBRARY_DIRS})
+target_link_libraries(guided_geometric_rrt_connect PRIVATE
+  ompl
+  Eigen3::Eigen
+  Boost::program_options
+  ${YAML_LIBRARIES}
+  ${FCL_LIBRARIES}
+)
+
 add_executable(guided_control_rrt
   src/guided/main_guided_control_rrt.cpp
   src/mapf/cbs.cpp

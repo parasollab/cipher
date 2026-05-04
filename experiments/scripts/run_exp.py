@@ -21,7 +21,9 @@ METHOD_EXECUTABLES = {
 
 def get_extra_args(method, output_full_path, timeout):
     if method == 'kcbs':
-        return ['--timelimit', str(int(timeout))]
+        base = Path(output_full_path)
+        stats_path = base.parent / (base.stem + '_stats.yaml')
+        return ['--timelimit', str(int(timeout)), '--stats', str(stats_path)]
     elif method == 'db_cbs':
         base = Path(output_full_path)
         return [
@@ -129,7 +131,18 @@ def run_planner(executable, problem_file, output_file, config_file, timeout, see
             if solved is None:  # kcbs/db_cbs omit this field; infer from result presence
                 solved = bool(output.get('result'))
             result['solved'] = solved
-            result['planning_time'] = output.get('planning_time', elapsed)
+            pt = output.get('planning_time')
+            if pt is not None:
+                result['planning_time'] = pt
+            else:
+                stats_path = Path(output_file).parent / (Path(output_file).stem + '_stats.yaml')
+                if stats_path.exists():
+                    with open(stats_path) as sf:
+                        stats_data = yaml.safe_load(sf)
+                    entries = (stats_data or {}).get('stats') or []
+                    result['planning_time'] = entries[-1]['t'] if entries else elapsed
+                else:
+                    result['planning_time'] = elapsed
             if result['solved']:
                 result['makespan'] = compute_makespan(output)
                 result['sum_of_costs'] = compute_sum_of_costs(output)

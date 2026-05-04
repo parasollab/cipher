@@ -45,10 +45,39 @@ public:
         ob::SpaceInformationPtr si,
         std::shared_ptr<fcl::BroadPhaseCollisionManagerf> col_mng_environment,
         std::shared_ptr<Robot> robot,
-        std::map<const ob::SpaceInformationPtr, std::shared_ptr<Robot>> all_robots)
+        std::map<const ob::SpaceInformationPtr, std::shared_ptr<Robot>> all_robots,
+        std::vector<std::pair<const ob::State*, std::shared_ptr<Robot>>> other_goals)
         : fclStateValidityChecker(si, col_mng_environment, robot, false)
         , all_robots_(all_robots)
+        , other_goals_(other_goals)
     {}
+
+    bool isValid(const ob::State* state) const override {
+        if (!fclStateValidityChecker::isValid(state)) {
+            return false;
+        }
+        const auto& t1 = robot_->getTransform(state, 0);
+        fcl::CollisionObjectf co1(robot_->getCollisionGeometry(0));
+        co1.setTranslation(t1.translation());
+        co1.setRotation(t1.rotation());
+        co1.computeAABB();
+
+        for (const auto& [goal_state, other_robot] : other_goals_) {
+            const auto& t2 = other_robot->getTransform(goal_state, 0);
+            fcl::CollisionObjectf co2(other_robot->getCollisionGeometry(0));
+            co2.setTranslation(t2.translation());
+            co2.setRotation(t2.rotation());
+            co2.computeAABB();
+
+            fcl::CollisionRequest<float> request;
+            fcl::CollisionResult<float> result;
+            fcl::collide(&co1, &co2, request, result);
+            if (result.isCollision()) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     bool areStatesValid(
         const ob::State* state1,
@@ -92,6 +121,7 @@ public:
 
 private:
     std::map<const ob::SpaceInformationPtr, std::shared_ptr<Robot>> all_robots_;
+    std::vector<std::pair<const ob::State*, std::shared_ptr<Robot>>> other_goals_;
 };
 
 
@@ -120,6 +150,29 @@ private:
 ob::PlannerPtr plannerAllocator(const ob::SpaceInformationPtr& si)
 {
     return std::make_shared<og::RRT>(si);
+}
+
+
+static bool statesOverlap(
+    const ob::State* s1, std::shared_ptr<Robot> r1,
+    const ob::State* s2, std::shared_ptr<Robot> r2)
+{
+    const auto& t1 = r1->getTransform(s1, 0);
+    fcl::CollisionObjectf co1(r1->getCollisionGeometry(0));
+    co1.setTranslation(t1.translation());
+    co1.setRotation(t1.rotation());
+    co1.computeAABB();
+
+    const auto& t2 = r2->getTransform(s2, 0);
+    fcl::CollisionObjectf co2(r2->getCollisionGeometry(0));
+    co2.setTranslation(t2.translation());
+    co2.setRotation(t2.rotation());
+    co2.computeAABB();
+
+    fcl::CollisionRequest<float> request;
+    fcl::CollisionResult<float> result;
+    fcl::collide(&co1, &co2, request, result);
+    return result.isCollision();
 }
 
 
@@ -265,24 +318,16 @@ int main(int argc, char** argv)
         robot_idx++;
     }
 
-    // --- Pass 2: Configure each robot, parse start/goal, create problem definitions ---
+    const int num_robots = robots.size();
+
+    // --- Pass 2a: Parse start/goal states for all robots ---
     std::vector<ob::State*> start_states;
     std::vector<ob::State*> goal_states;
     robot_idx = 0;
 
     for (const auto& robot_node : env["robots"]) {
-        auto robot = robots[robot_idx];
         auto robot_si = robot_sis[robot_idx];
 
-        // Set state validity checker with dynamic obstacle support
-        auto validity_checker = std::make_shared<IndividualStateValidityChecker>(
-            robot_si, col_mng_environment, robot, all_robots);
-        robot_si->setStateValidityChecker(validity_checker);
-
-        // Setup the space information
-        robot_si->setup();
-
-        // Parse start state
         const auto& start_vec = robot_node["start"];
         auto start_state = robot_si->getStateSpace()->allocState();
         auto start_se2 = start_state->as<ob::SE2StateSpace::StateType>();
@@ -291,7 +336,6 @@ int main(int argc, char** argv)
         start_se2->setYaw(start_vec.size() > 2 ? start_vec[2].as<double>() : 0.0);
         start_states.push_back(start_state);
 
-        // Parse goal state
         const auto& goal_vec = robot_node["goal"];
         auto goal_state = robot_si->getStateSpace()->allocState();
         auto goal_se2 = goal_state->as<ob::SE2StateSpace::StateType>();
@@ -300,23 +344,45 @@ int main(int argc, char** argv)
         goal_se2->setYaw(goal_vec.size() > 2 ? goal_vec[2].as<double>() : 0.0);
         goal_states.push_back(goal_state);
 
-        // Create problem definition for this robot
-        auto pdef = std::make_shared<ob::ProblemDefinition>(robot_si);
-        pdef->addStartState(start_state);
-        pdef->setGoal(std::make_shared<IndividualGoalCondition>(
-            robot_si, goal_state, goal_threshold));
-
-        // Add to multi-robot space information and problem definition
-        ma_si->addIndividual(robot_si);
-        ma_pdef->addIndividual(pdef);
-
         std::cout << "    Start: (" << start_se2->getX() << ", " << start_se2->getY() << ")" << std::endl;
         std::cout << "    Goal:  (" << goal_se2->getX() << ", " << goal_se2->getY() << ")" << std::endl;
 
         robot_idx++;
     }
 
-    const int num_robots = robots.size();
+    // --- Pass 2b: Create validity checkers and problem definitions ---
+    // All goals are known now, so each checker can forbid other robots' goal positions.
+    for (robot_idx = 0; robot_idx < num_robots; ++robot_idx) {
+        auto robot = robots[robot_idx];
+        auto robot_si = robot_sis[robot_idx];
+
+        // Build list of every other robot's goal state for collision avoidance.
+        // Skip robot j's goal if it overlaps with robot K's start — robot K is
+        // already there at t=0 and will move away (dynamic checks handle timing).
+        std::vector<std::pair<const ob::State*, std::shared_ptr<Robot>>> other_goals;
+        for (int j = 0; j < num_robots; ++j) {
+            if (j != robot_idx) {
+                if (!statesOverlap(goal_states[j], robots[j],
+                                   start_states[robot_idx], robots[robot_idx])) {
+                    other_goals.emplace_back(goal_states[j], robots[j]);
+                }
+            }
+        }
+
+        auto validity_checker = std::make_shared<IndividualStateValidityChecker>(
+            robot_si, col_mng_environment, robot, all_robots, other_goals);
+        robot_si->setStateValidityChecker(validity_checker);
+        robot_si->setup();
+
+        auto pdef = std::make_shared<ob::ProblemDefinition>(robot_si);
+        pdef->addStartState(start_states[robot_idx]);
+        pdef->setGoal(std::make_shared<IndividualGoalCondition>(
+            robot_si, goal_states[robot_idx], goal_threshold));
+
+        ma_si->addIndividual(robot_si);
+        ma_pdef->addIndividual(pdef);
+    }
+
     std::cout << "Planning for " << num_robots << " robots" << std::endl;
 
     // Lock the multi-robot structures
