@@ -363,6 +363,7 @@ YAML::Node CoupledRRTPlanner::plan(const YAML::Node& env)
 
 // ── main ──────────────────────────────────────────────────────────────────────
 
+#ifdef COUPLED_RRT_MAIN
 int main(int argc, char** argv)
 {
     std::string inputFile;
@@ -419,3 +420,4 @@ int main(int argc, char** argv)
 
     return 0;
 }
+#endif // COUPLED_RRT_MAIN
