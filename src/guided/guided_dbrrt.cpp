@@ -1936,7 +1936,7 @@ ob::State* eigen_to_ompl_state(const Eigen::Ref<const Eigen::VectorXd> x, std::s
 int locate_region(const Eigen::Ref<const Eigen::VectorXd> x, std::shared_ptr<Robot> ompl_robot, std::shared_ptr<DecompositionImpl> decomposition) {
   auto grid_decomp = static_cast<GridDecompositionImpl *>(decomposition.get());
   auto* state = eigen_to_ompl_state(x, ompl_robot);
-  return grid_decomp->locateRegion(state);
+  return grid_decomp->locateSubRegion(state);
 }
 
 bool check_trajectory_valid(dynobench::TrajWrapper traj_wrapper, std::shared_ptr<Robot> ompl_robot, std::shared_ptr<DecompositionImpl> decomposition, std::vector<int> region_path, int region_idx) {

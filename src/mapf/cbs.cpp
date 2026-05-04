@@ -32,7 +32,8 @@ CBS::CBS(int region_capacity, double timeout,
 std::vector<std::vector<int>> CBS::solve(
     std::shared_ptr<DecompositionImpl> decomp,
     const std::vector<ompl::base::State*>& start_states,
-    const std::vector<ompl::base::State*>& goal_states)
+    const std::vector<ompl::base::State*>& goal_states,
+    const std::set<int>& allowed_regions)
 {
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -40,8 +41,8 @@ std::vector<std::vector<int>> CBS::solve(
     std::cout << "CBS: Starting solve for " << start_states.size() << " robots" << std::endl;
 #endif
 
-    // Build region graph
-    RegionGraph graph = buildRegionGraph(decomp);
+    // Build region graph (optionally restricted to allowed_regions)
+    RegionGraph graph = buildRegionGraph(decomp, allowed_regions);
 
     // Initialize root CT node
     CTNode root;
@@ -173,7 +174,8 @@ std::vector<std::vector<int>> CBS::solve(
 // Graph Construction
 // ============================================================================
 
-RegionGraph CBS::buildRegionGraph(std::shared_ptr<DecompositionImpl> decomp)
+RegionGraph CBS::buildRegionGraph(std::shared_ptr<DecompositionImpl> decomp,
+                                   const std::set<int>& allowed_regions)
 {
     int total = decomp->getTotalNumRegions();
     RegionGraph graph(total);
@@ -182,6 +184,7 @@ RegionGraph CBS::buildRegionGraph(std::shared_ptr<DecompositionImpl> decomp)
 
     for (int i = 0; i < total; ++i) {
         if (!decomp->isLeafRegion(i)) continue;
+        if (!allowed_regions.empty() && !allowed_regions.count(i)) continue;
         if (invalid.count(i)) continue;
 
         std::vector<int> neighbors;
@@ -189,6 +192,7 @@ RegionGraph CBS::buildRegionGraph(std::shared_ptr<DecompositionImpl> decomp)
 
         for (int neighbor : neighbors) {
             if (!decomp->isLeafRegion(neighbor)) continue;
+            if (!allowed_regions.empty() && !allowed_regions.count(neighbor)) continue;
             if (invalid.count(neighbor)) continue;
             EdgeProperty ep;
             ep.weight = 1.0;

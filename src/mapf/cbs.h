@@ -113,7 +113,8 @@ public:
     std::vector<std::vector<int>> solve(
         std::shared_ptr<DecompositionImpl> decomp,
         const std::vector<ompl::base::State*>& start_states,
-        const std::vector<ompl::base::State*>& goal_states);
+        const std::vector<ompl::base::State*>& goal_states,
+        const std::set<int>& allowed_regions = {});
 
     std::string getName() const { return "CBS"; }
 
@@ -124,7 +125,8 @@ private:
     double max_obstacle_volume_percent_;
 
     // Graph construction
-    RegionGraph buildRegionGraph(std::shared_ptr<DecompositionImpl> decomp);
+    RegionGraph buildRegionGraph(std::shared_ptr<DecompositionImpl> decomp,
+                                 const std::set<int>& allowed_regions = {});
     std::set<int> computeInvalidRegions(std::shared_ptr<DecompositionImpl> decomp);
     void getNeighbors(const RegionGraph& graph, int region, std::vector<int>& neighbors);
 

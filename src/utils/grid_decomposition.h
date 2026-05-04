@@ -31,7 +31,8 @@ class RectGridDecompositionImpl : public DecompositionImpl {
     void sampleFullState(const ompl::base::StateSamplerPtr& sampler,
                          const std::vector<double>& coord, ompl::base::State* s) const override;
     ompl::base::RealVectorBounds getCellBounds(int rid) const override;
-    void Decompose(int rid) override {}  // not needed for local refinement decomps
+    void Decompose(int rid) override {}   // not needed for local refinement decomps
+    void resetCell(int /*rid*/) override {}  // no-op: RectGrid does not subdivide cells
     int getDecompositionDepth(int /*rid*/) const override { return 0; }
     int getMaxDecompositions(int /*rid*/, double /*minSideLength*/) const override { return 0; }
 
@@ -66,7 +67,12 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
         return vol;
     }
     int locateRegion(const ompl::base::State* s) const override { return ompl::control::GridDecomposition::locateRegion(s); }
-    void sampleFromRegion(int rid, ompl::RNG& rng, std::vector<double>& coord) const override { ompl::control::GridDecomposition::sampleFromRegion(rid, rng, coord); }
+    void sampleFromRegion(int rid, ompl::RNG& rng, std::vector<double>& coord) const override {
+        const auto& bounds = getBoundsForRegion(rid);
+        coord.resize(dimension_);
+        for (int i = 0; i < dimension_; ++i)
+            coord[i] = rng.uniformReal(bounds.low[i], bounds.high[i]);
+    }
 
     void project(const ompl::base::State* s, std::vector<double>& coord) const override;
 
@@ -99,6 +105,8 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
 
     int getTotalNumRegions() const override { return nextVirtualId_; }
     bool isLeafRegion(int rid) const override { return !children_.count(rid); }
+
+    void resetCell(int rid) override;
 
     // Set the robot state space so that project/sampleFullState work with any
     // state type (SE2, RealVector, etc.) via copyToReals/copyFromReals.

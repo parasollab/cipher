@@ -450,3 +450,14 @@ int GridDecompositionImpl::getMaxDecompositions(int rid, double minSideLength) c
     }
     return n;
 }
+
+void GridDecompositionImpl::resetCell(int rid)
+{
+    auto it = children_.find(rid);
+    if (it == children_.end()) return;
+
+    for (int child : it->second)
+        parent_.erase(child);
+
+    children_.erase(it);
+}

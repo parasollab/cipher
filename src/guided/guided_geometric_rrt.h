@@ -59,6 +59,8 @@ public:
             return ob::PlannerStatus::INVALID_START;
         }
 
+        valid_regions.insert(decomp_path[0]);
+
         Motion *solution = nullptr;
         Motion *approxsol = nullptr;
         double approxdif = std::numeric_limits<double>::infinity();
@@ -101,12 +103,13 @@ public:
             if (coverage_map[region_idx] > min_coverage) {
                 if (region_idx < (int)decomp_path.size()-1) {
                     region_idx++;
+                    valid_regions.insert(decomp_path[region_idx]);
                 } else {
                     sample_goal = true;
                 }
             }
 
-            if (sample_goal && (goal_s != nullptr) && goal_s->canSample()) {
+            if (sample_goal && (goal_s != nullptr) && rng_.uniform01() < goalBias_ && goal_s->canSample()) {
                 goal_s->sampleGoal(rstate);
             } else {
                 // Sample from the current region
@@ -169,9 +172,10 @@ public:
                         motion->state = states[i];
 
                         // Check if state enters any other regions
-                        int new_region_idx = decomposition_->locateRegion(motion->state);
+                        int new_region_idx = decomposition_->locateSubRegion(motion->state);
                         // std::cout << "[GuidedGeoRRT] new_region_idx=" << new_region_idx << "!=" << decomp_path[region_idx] << std::endl;
                         if ((region_idx > 0 && new_region_idx != decomp_path[region_idx - 1]) && new_region_idx != decomp_path[region_idx]) {
+                        // if (valid_regions.find(new_region_idx) == valid_regions.end()) {
                             // Remove state from tree and continue
                             si_->freeState(motion->state);
                             delete motion;
@@ -191,11 +195,12 @@ public:
                         nmotion = motion;
                     }
                     if (skipped > 0)
-                        std::cout << "[GuidedGeoRRT] skipped " << skipped
-                                  << " intermediate states (wrong region)" << std::endl;
+                        skipped = 10;
+                        // std::cout << "[GuidedGeoRRT] skipped " << skipped
+                        //           << " intermediate states (wrong region)" << std::endl;
                     else {
                         // coverage_map[region_idx] += 1;
-                        int end_region_idx = decomposition_->locateRegion(extension.back()->state);
+                        int end_region_idx = decomposition_->locateSubRegion(extension.back()->state);
                         if (end_region_idx == decomp_path[region_idx]) {
                             coverage_map[region_idx]++;
                         }
@@ -279,9 +284,11 @@ protected:
 
     std::vector<int> decomp_path;
 
+    std::set<int> valid_regions;
+
     std::unordered_map<int, int> coverage_map;
 
-    int min_coverage = 5;
+    int min_coverage = 2;
 
 };
 

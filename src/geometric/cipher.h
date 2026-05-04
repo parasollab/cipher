@@ -58,7 +58,7 @@ private:
 
 struct MAPFConfig {
     std::string method = "cbs";  // Options: "decoupled", "astar", "cbs"
-    int region_capacity = 2;           // Robots per vertex/edge (for CBS)
+    int region_capacity = 1;           // Robots per vertex/edge (for CBS)
     double max_obstacle_volume_percent = 0.5;  // Maximum obstacle volume in a region (0.0 to 1.0)
     double mapf_timeout = 30.0;          // Timeout for MAPF solver in seconds
 };
@@ -87,7 +87,7 @@ struct ConflictResolutionConfig {
 struct CipherGeometricConfig {
     int decomposition_region_length = 5.0;
     std::vector<int> decomposition_resolution = {10, 10, 1};  // Grid cells in [x, y, z]
-    double planning_time_limit = 60.0;
+    double planning_time_limit = 30.0;
     double max_total_time = 0.0;  // Maximum total planning time in seconds (0 = no limit)
     int seed = -1;  // Random seed (-1 for random)
     double goal_threshold = 0.5;  // Distance threshold for goal satisfaction
@@ -342,6 +342,8 @@ private:
 
     // Hierarchical decomposition tracking
     std::vector<DecompositionCell> decomposition_hierarchy_;  // One cell per initial region
+
+    std::map<std::pair<int, int>, std::map<std::vector<int>, std::pair<PathUpdateInfo, PathUpdateInfo>>> robot_pair_refinement_info;
 
     // Tracks (expansion_layer, refinement_level) at which each leaf cell was last decomposed.
     // A cell may only be re-decomposed within the same expansion_layer at a strictly higher

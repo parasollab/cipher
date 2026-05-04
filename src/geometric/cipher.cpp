@@ -1041,6 +1041,39 @@ bool CipherGeometricPlanner::resolveWithHierarchicalExpansionRefinement(
             break;
         }
 
+        // Reset cells refined in previous expansion layers before considering the wider region set.
+        // Refinement from a failed layer should not persist into the next expansion attempt.
+        if (expansion_layer > min_expansion_layer) {
+            auto grid_decomp = std::static_pointer_cast<GridDecompositionImpl>(decomp_);
+
+            // Collect decomposed parent cells from previous expansion layers, deepest first.
+            std::vector<std::pair<int,int>> to_reset; // (depth, rid)
+            for (auto& [rid, level_pair] : region_refinement_level_) {
+                if (level_pair.first < expansion_layer && grid_decomp->hasDecomposed(rid)) {
+                    to_reset.push_back({grid_decomp->getDecompositionDepth(rid), rid});
+                }
+            }
+            std::sort(to_reset.begin(), to_reset.end(), [](const auto& a, const auto& b) {
+                return a.first > b.first;
+            });
+
+            for (auto& [depth, r] : to_reset) {
+                if (grid_decomp->hasDecomposed(r)) {
+                    for (int child : grid_decomp->getChildRegions(r)) {
+                        region_viz_id_.erase(child);
+                        region_refinement_level_.erase(child);
+                    }
+                }
+                decomp_->resetCell(r);
+                region_refinement_level_.erase(r);
+            }
+
+            if (!to_reset.empty()) {
+                std::cout << "    Reset " << to_reset.size()
+                          << " refined cell(s) from previous expansion layers" << std::endl;
+            }
+        }
+
         // Get expanded region for this layer
         std::vector<int> expanded_regions = getExpandedRegion(conflict_region, expansion_layer);
 
@@ -1326,22 +1359,28 @@ bool CipherGeometricPlanner::refineExpandedRegion(
         return false;
     }
 
-    // Step 3: MAPF replanning on the refined decomposition (only for robots that need replanning)
+    // Step 3: MAPF replanning restricted to the expanded region's current leaf cells.
+    // Collect leaf cells for all expanded_regions (post-refinement) so CBS cannot
+    // route through regions outside the expanded area.
+    std::set<int> expanded_leaf_regions;
+    for (int r : expanded_regions) {
+        std::vector<int> leaves;
+        collectLeaves(r, leaves);
+        expanded_leaf_regions.insert(leaves.begin(), leaves.end());
+    }
+
     std::vector<std::vector<int>> local_high_level_paths;
     {
-        // CBS mapf_solver(config_.mapf_config.region_capacity, config_.mapf_config.mapf_timeout,
-        //             obstacles_, config_.mapf_config.max_obstacle_volume_percent);
         CBS mapf_solver(1, config_.mapf_config.mapf_timeout,
                     obstacles_, config_.mapf_config.max_obstacle_volume_percent);
-    
+
         for (size_t robot_idx = 0; robot_idx < replan_hl_starts.size(); ++robot_idx) {
             std::cout << "Robot " << robot_idx << " start region: " << decomp_->locateSubRegion(replan_hl_starts[robot_idx])
                 << " -> end region: " << decomp_->locateSubRegion(replan_hl_goals[robot_idx]) << std::endl;
-
         }
 
         local_high_level_paths = mapf_solver.solve(
-            decomp_, replan_hl_starts, replan_hl_goals);
+            decomp_, replan_hl_starts, replan_hl_goals, expanded_leaf_regions);
     }
 
     if (local_high_level_paths.empty()) {
@@ -1473,7 +1512,43 @@ bool CipherGeometricPlanner::refineExpandedRegion(
                 std::vector<size_t> single_robot = {replan_robot_indices[i]};
                 std::vector<GuidedPlanningResult> single_result = {replan_results[i]};
                 PathUpdateInfo& update_info = (replan_to_collision_idx[i] == 0) ? update_info_1 : update_info_2;
+                ///TODO: paths are not in correct regions... Also the paths are not from real start and goal
                 integrateRefinedPaths(single_robot, single_result, update_info, update_info);
+            }
+        }
+
+        // Record integrated paths
+        if (do_viz_) {
+            for (size_t i = 0; i < replan_robot_indices.size(); ++i) {
+                if (replan_results[i].path == nullptr) continue;
+                const size_t r = replan_robot_indices[i];
+                auto si = robot_sis_[r];
+                // const auto& path = replan_results[i].path;
+                const auto& path = guided_planning_results_[r].path;
+                YAML::Node ev;
+                ev["type"] = "low_level_paths";
+                YAML::Node paths;
+                YAML::Node waypoints;
+                const size_t n = path->getStateCount();
+                for (size_t j = 0; j < n; ++j) {
+                    std::vector<double> reals;
+                    si->getStateSpace()->copyToReals(reals, path->getState(j));
+                    YAML::Node wp;
+                    YAML::Node state_node;
+                    for (double v : reals) state_node.push_back(v);
+                    while ((int)state_node.size() < 3) state_node.push_back(0.0);
+                    wp["state"] = state_node;
+                    YAML::Node ctrl; ctrl.push_back(0.0); ctrl.push_back(0.0);
+                    wp["control"] = ctrl;
+                    wp["duration"] = (j + 1 < n) ? 0.1 : 0.0;
+                    waypoints.push_back(wp);
+                }
+                paths["r" + std::to_string(r)] = waypoints;
+                ev["paths"] = paths;
+                viz_events_.push_back(ev);
+                vizWriteFile();
+                std::cout << "[viz] refined low_level_paths event for robot " << r
+                          << " written to " << viz_file_ << std::endl;
             }
         }
     }
@@ -1508,29 +1583,31 @@ int CipherGeometricPlanner::calculateMaxExpansionLayers() const {
     }
     std::cout << "  Robot max geometry dimension: " << robot_max_dim << std::endl;
 
-    // Compute the base cell size from the decomposition bounds.
-    const auto& bounds = decomp_->getBounds();
-    int num_regions = decomp_->getNumRegions();
-    int grid_side = static_cast<int>(std::sqrt(num_regions));
-    float cell_size = std::numeric_limits<float>::max();
-    for (int d = 0; d < decomp_->getDimension(); ++d) {
-        float span = static_cast<float>(bounds.high[d] - bounds.low[d]);
-        float cs = (grid_side > 0) ? (span / grid_side) : span;
-        cell_size = std::min(cell_size, cs);
-    }
-    std::cout << "  Base cell size (min dim): " << cell_size << std::endl;
+    return decomp_->getMaxDecompositions(0, robot_max_dim);
 
-    // Cells must not be smaller than the robot's largest dimension.
-    // If the grid is already too fine, cap expansion to 1 layer and warn.
-    if (robot_max_dim > 0.0f && cell_size < robot_max_dim) {
-        std::cout << "  WARNING: cell size (" << cell_size
-                  << ") is smaller than robot max dimension (" << robot_max_dim
-                  << "). Capping max expansion layers to 1." << std::endl;
-        return 1;
-    }
+    // // Compute the base cell size from the decomposition bounds.
+    // const auto& bounds = decomp_->getBounds();
+    // int num_regions = decomp_->getNumRegions();
+    // int grid_side = static_cast<int>(std::sqrt(num_regions));
+    // float cell_size = std::numeric_limits<float>::max();
+    // for (int d = 0; d < decomp_->getDimension(); ++d) {
+    //     float span = static_cast<float>(bounds.high[d] - bounds.low[d]);
+    //     float cs = (grid_side > 0) ? (span / grid_side) : span;
+    //     cell_size = std::min(cell_size, cs);
+    // }
+    // std::cout << "  Base cell size (min dim): " << cell_size << std::endl;
 
-    // For a grid decomposition of NxN, the maximum useful expansion from center is N/2.
-    return (grid_side + 1) / 2;  // ceil(grid_side / 2)
+    // // Cells must not be smaller than the robot's largest dimension.
+    // // If the grid is already too fine, cap expansion to 1 layer and warn.
+    // if (robot_max_dim > 0.0f && cell_size < robot_max_dim) {
+    //     std::cout << "  WARNING: cell size (" << cell_size
+    //               << ") is smaller than robot max dimension (" << robot_max_dim
+    //               << "). Capping max expansion layers to 1." << std::endl;
+    //     return 1;
+    // }
+
+    // // For a grid decomposition of NxN, the maximum useful expansion from center is N/2.
+    // return (grid_side + 1) / 2;  // ceil(grid_side / 2)
 }
 
 bool CipherGeometricPlanner::expansionCoversFullDecomposition(int expansion_layers) const {
@@ -1790,8 +1867,23 @@ bool CipherGeometricPlanner::extractReplanningBoundsForExpandedRegion(
         return true;
     };
 
+    auto robot_key = std::make_pair(robot_1, robot_2);
+    auto& region_cache = robot_pair_refinement_info[robot_key];
+    auto cache_it = region_cache.find(expanded_regions);
+    if (cache_it != region_cache.end()) {
+        std::cout << "Cache hit for robot pair (" << robot_1 << ", " << robot_2
+              << ") with " << expanded_regions.size() << " regions" << std::endl;
+        update_info_1 = cache_it->second.first;
+        update_info_2 = cache_it->second.second;
+        return true;
+    }
+
     bool success_1 = extractForRobot(robot_1, update_info_1);
     bool success_2 = extractForRobot(robot_2, update_info_2);
+
+    if (success_1 && success_2) {
+        robot_pair_refinement_info[robot_key][expanded_regions] = {update_info_1, update_info_2};
+    }
 
     return success_1 && success_2;
 }
@@ -1802,6 +1894,98 @@ void CipherGeometricPlanner::integrateRefinedPaths(
     const PathUpdateInfo& update_info_1,
     const PathUpdateInfo& update_info_2) {
     std::cout << "Integrating refined paths..." << std::endl;
+    std::vector<PathUpdateInfo> update_infos = {update_info_1, update_info_2};
+
+    for (size_t i = 0; i < robot_indices.size(); ++i) {
+        size_t robot_idx = robot_indices[i];
+        const auto& result = local_results[i];
+        const auto& update_info = update_infos[i];
+
+        std::cout << "    Integrating refined path for robot " << robot_idx << std::endl;
+
+        // Note: We'll re-segment the entire path after splicing the PathControl below
+        // This is necessary because segment state pointers become invalid after path updates
+
+        // Splice the full PathControl for guided_planning_results
+        // We need to construct a complete path: before + refined + after
+        auto si = robots_[robot_idx]->getSpaceInformation();
+        auto original_path = guided_planning_results_[robot_idx].path;
+
+        if (original_path) {
+            std::cout << "      Original path has " << original_path->getStateCount() << " states" << std::endl;
+        }
+        if (result.path) {
+            std::cout << "      Refined path has " << result.path->getStateCount() << " states" << std::endl;
+        }
+
+        if (original_path && result.path) {
+            // Create a new path that combines the three parts
+            auto spliced_path = std::make_shared<og::PathGeometric>(si);
+
+            // Part 1: Find the entry state index in the original path
+            size_t entry_state_idx = 0;
+            for (size_t s = 0; s < original_path->getStateCount(); ++s) {
+                if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_entry_state) < 1e-3) {
+                    std::cout << "!!Found Start!!" << std::endl;
+                    entry_state_idx = s;
+                    break;
+                }
+            }
+
+            std::cout << "      Entry state found at index " << entry_state_idx << std::endl;
+
+            // Part 1: Copy states from original path up to and including entry
+            for (size_t s = 0; s <= entry_state_idx; ++s) {
+                spliced_path->append(original_path->getState(s));
+            }
+
+            std::cout << "spliced path len: " << spliced_path->getStateCount() << std::endl;
+
+            // Part 2: Add all states from the refined path
+            for (size_t s = 0; s < result.path->getStateCount(); ++s) {
+                spliced_path->append(result.path->getState(s));
+            }
+
+            std::cout << "spliced path len: " << spliced_path->getStateCount() << std::endl;
+
+            // Part 3: Find exit state index in the original path
+            size_t exit_state_idx = original_path->getStateCount() - 1;
+            for (size_t s = entry_state_idx; s < original_path->getStateCount(); ++s) {
+                if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_exit_state) < 1e-3) {
+                    std::cout << "!!Found Exit!!" << std::endl;
+                    exit_state_idx = s;
+                    break;
+                }
+            }
+
+            // Part 3: Copy states from original path after exit
+            for (size_t s = exit_state_idx + 1; s < original_path->getStateCount(); ++s) {
+                spliced_path->append(original_path->getState(s));
+            }
+
+            std::cout << "spliced path len: " << spliced_path->getStateCount() << std::endl;
+
+            std::cout << "      Spliced path has " << spliced_path->getStateCount() << " states" << std::endl;
+
+            // Update the guided planning result with the spliced path
+            guided_planning_results_[robot_idx].path = spliced_path;
+
+            // Re-segment the entire updated path from scratch
+            std::vector<PathSegment> new_segments;
+            segmentSinglePath(robot_idx, spliced_path, 0, new_segments);
+            path_segments_[robot_idx] = new_segments;
+
+            std::cout << "      Re-segmented path has " << new_segments.size() << " segments" << std::endl;
+        } else {
+            // If we can't splice, fall back torefined path
+            guided_planning_results_[robot_idx] = result;
+
+            // Re-segment the refined path
+            std::vector<PathSegment> new_segments;
+            segmentSinglePath(robot_idx, result.path, 0, new_segments);
+            path_segments_[robot_idx] = new_segments;
+        }
+    }
 }
 
 void CipherGeometricPlanner::recheckConflictsFromTimestep(int start_timestep) {

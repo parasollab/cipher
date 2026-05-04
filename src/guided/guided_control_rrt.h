@@ -127,8 +127,8 @@ public:
                 {
 
                     bool ends_in_region = false;
-                    std::cout << "EndRegion: " << decomposition_->locateRegion(pstates.back()) << "!=" << decomp_path[region_idx] << std::endl;
-                    if (decomposition_->locateRegion(pstates.back()) == decomp_path[region_idx]) {
+                    std::cout << "EndRegion: " << decomposition_->locateSubRegion(pstates.back()) << "!=" << decomp_path[region_idx] << std::endl;
+                    if (decomposition_->locateSubRegion(pstates.back()) == decomp_path[region_idx]) {
                         // coverage_map[region_idx] += 1;
                         ends_in_region = true;
                     }
@@ -144,7 +144,7 @@ public:
                         motion->state = pstates[p];
 
                         // Check if state enters any other regions. If so, pstates are invalid
-                        int new_region_idx = decomposition_->locateRegion(motion->state);
+                        int new_region_idx = decomposition_->locateSubRegion(motion->state);
                         // std::cout << "[GuidedControlRRT] new_region_idx=" << new_region_idx << "!=" << decomp_path[region_idx] << std::endl;
                         
                         // If state enters a different region than the current one or the previous one (if > 0), skip it
