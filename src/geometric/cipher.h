@@ -104,26 +104,8 @@ struct CipherGeometricConfig {
     // Guided planner configuration
     std::string guided_planner_method = "guided_geometric_rrt";
 
-    // Segmentation configuration
-    int segment_timesteps = 30;  // Number of timesteps per segment
-
     // Conflict resolution configuration
     ConflictResolutionConfig conflict_resolution_config;
-};
-
-// ============================================================================
-// Path Segment Structure
-// ============================================================================
-
-struct PathSegment {
-    size_t robot_index;           // Which robot this segment belongs to
-    size_t segment_index;         // Index of this segment in the robot's path
-    ob::State* start_state;       // Start state of segment (owned by original path)
-    ob::State* end_state;         // End state of segment (owned by original path)
-    std::vector<ob::State*> states;      // States of segment (owned by original path)
-    double total_duration;        // Total duration of this segment
-    int start_timestep;           // Starting timestep of this segment
-    int end_timestep;             // Ending timestep of this segment
 };
 
 // ============================================================================
@@ -139,16 +121,13 @@ struct SegmentConflict {
     ConflictType type;
     size_t robot_index_1;      // Primary robot (or only robot for ROBOT_OBSTACLE)
     size_t robot_index_2;      // Secondary robot (only for ROBOT_ROBOT)
-    size_t segment_index_1;    // Segment of robot 1
-    size_t segment_index_2;    // Segment of robot 2 (only for ROBOT_ROBOT)
     int timestep;              // Timestep where conflict occurred
     size_t part_index_1;       // Which part of robot 1 collided
     size_t part_index_2;       // Which part of robot 2 collided (only for ROBOT_ROBOT)
 
     SegmentConflict()
         : type(ROBOT_OBSTACLE), robot_index_1(0), robot_index_2(0),
-          segment_index_1(0), segment_index_2(0), timestep(0),
-          part_index_1(0), part_index_2(0) {}
+          timestep(0), part_index_1(0), part_index_2(0) {}
 };
 
 // ============================================================================
@@ -160,8 +139,6 @@ struct PathUpdateInfo {
     int start_timestep;            // first timestep inside the expanded region
     int end_timestep;              // first timestep outside the expanded region
     int planning_entry_timestep;   // timestep of planning_entry_state (last timestep outside region before entry, or 0)
-    size_t start_segment_idx;
-    size_t end_segment_idx;
     ob::State* region_entry_state;  // first state inside the expanded region
     ob::State* region_exit_state;   // last state inside the expanded region
     ob::State* planning_entry_state;    // last state outside the expanded region (before entering)
@@ -293,15 +270,14 @@ public:
     // Individual planning phases (can be called separately if needed)
     void computeHighLevelPaths();
     void computeGuidedPaths();
-    void segmentGuidedPaths();
-    bool checkSegmentsForConflicts();  // Checks robot-robot conflicts only; obstacle avoidance is handled by guided planner
+    bool checkPathsForConflicts();  // Checks robot-robot conflicts only; obstacle avoidance is handled by guided planner
     bool resolveConflicts();  // Returns true if all conflicts were resolved
 
     // Accessors
     const std::vector<std::vector<int>>& getHighLevelPaths() const { return high_level_paths_; }
     const std::shared_ptr<DecompositionImpl> getDecomposition() const { return decomp_; }
     const std::vector<GuidedPlanningResult>& getGuidedPaths() const { return guided_planning_results_; }
-    const std::vector<std::vector<PathSegment>>& getPathSegments() const { return path_segments_; }
+    const std::vector<std::shared_ptr<og::PathGeometric>>& getRobotPaths() const { return robot_paths_; }
     const std::vector<std::shared_ptr<Robot>>& getRobots() const { return robots_; }
     const std::vector<SegmentConflict>& getConflicts() const { return segment_conflicts_; }
 
@@ -328,7 +304,7 @@ private:
     // Planning state
     std::vector<std::vector<int>> high_level_paths_;
     std::vector<GuidedPlanningResult> guided_planning_results_;
-    std::vector<std::vector<PathSegment>> path_segments_;  // Segments for each robot
+    std::vector<std::shared_ptr<og::PathGeometric>> robot_paths_;  // Current path per robot
     std::vector<SegmentConflict> segment_conflicts_;     // Detected conflicts
     bool problem_loaded_ = false;
     ResolutionStats resolution_stats_;  // Track conflict resolution statistics
@@ -367,8 +343,7 @@ private:
         const std::vector<double>& region_max) const;
 
     // Conflict checking helpers
-    const PathSegment* findSegmentAtTimestep(size_t robot_idx, int timestep) const;
-    void propagateToTimestep(size_t robot_idx, size_t segment_idx, int timestep, ob::State* result) const;
+    ob::State* getStateAtTimestep(size_t robot_idx, int timestep) const;
     bool checkTwoRobotConflict(size_t robot_idx_1, const ob::State* state_1,
                                size_t robot_idx_2, const ob::State* state_2,
                                size_t& part_1, size_t& part_2) const;
@@ -412,7 +387,6 @@ private:
         int refinement_level);
 
     int calculateMaxExpansionLayers() const;
-    bool expansionCoversFullDecomposition(int expansion_layers) const;
 
     // Local composite planner (plans colliding robots jointly in local bounds)
     bool resolveWithLocalCompositePlanner(const SegmentConflict& conflict,
@@ -460,11 +434,6 @@ private:
     int getRecheckStartTimestep(const SegmentConflict& conflict,
                                 const PathUpdateInfo& update_info_1,
                                 const PathUpdateInfo& update_info_2);
-    void segmentSinglePath(
-        size_t robot_idx,
-        const std::shared_ptr<og::PathGeometric>& path,
-        int start_timestep_offset,
-        std::vector<PathSegment>& segments);
 
     // Subproblem expansion helpers
     std::vector<int> getExpandedRegion(int center_region, int expansion_layers);

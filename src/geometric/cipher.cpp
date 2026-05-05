@@ -241,24 +241,9 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
             return result;
         }
 
-        // Phase 3: Segment guided paths and check for conflicts
-        DOUT << "[Phase 3] Segmenting guided paths..." << std::endl;
-        segmentGuidedPaths();
-        DOUT << "[Phase 3] Guided paths segmented" << std::endl;
-
-        if (isTimeoutExceeded()) {
-            std::cerr << "Planning timeout exceeded after segmenting guided paths" << std::endl;
-            result.success = false;
-            result.failure_reason = "timeout_segmenting_guided_paths";
-            auto end_time = std::chrono::steady_clock::now();
-            result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
-            result.resolution_stats = resolution_stats_;
-            return result;
-        }
-
-        DOUT << "[Phase 3.1] Checking segments for conflicts..." << std::endl;
-        bool conflicts_found = checkSegmentsForConflicts();
-        DOUT << "[Phase 3.1] Conflict checking complete: " << segment_conflicts_.size() << " conflicts found." << std::endl;
+        DOUT << "[Phase 3] Checking paths for conflicts..." << std::endl;
+        bool conflicts_found = checkPathsForConflicts();
+        DOUT << "[Phase 3] Conflict checking complete: " << segment_conflicts_.size() << " conflicts found." << std::endl;
 
         // Phase 4: Resolve conflicts 
         if (conflicts_found) {
@@ -384,6 +369,12 @@ void CipherGeometricPlanner::computeGuidedPaths() {
 
     DOUT << "Guided planner results: " << guided_planning_results_.size() << std::endl;
 
+    // Populate robot_paths_ directly from guided results
+    robot_paths_.resize(robots_.size());
+    for (size_t r = 0; r < guided_planning_results_.size(); ++r) {
+        robot_paths_[r] = guided_planning_results_[r].success ? guided_planning_results_[r].path : nullptr;
+    }
+
     // Emit low_level_paths event per robot once paths are available
     if (do_viz_ && !guided_planning_results_.empty()) {
         for (int r = 0; r < (int)guided_planning_results_.size(); ++r) {
@@ -417,192 +408,54 @@ void CipherGeometricPlanner::computeGuidedPaths() {
     }
 }
 
-void CipherGeometricPlanner::segmentGuidedPaths() {
-    DOUT << "Segmenting guided paths..." << std::endl;
+ob::State* CipherGeometricPlanner::getStateAtTimestep(size_t robot_idx, int timestep) const {
+    if (robot_idx >= robot_paths_.size() || !robot_paths_[robot_idx]) return nullptr;
+    const auto& path = robot_paths_[robot_idx];
+    size_t count = path->getStateCount();
+    if (count == 0) return nullptr;
+    size_t idx = static_cast<size_t>(std::max(0, std::min(timestep, static_cast<int>(count) - 1)));
+    return path->getState(idx);
+}
 
-    if (!problem_loaded_) {
-        throw std::runtime_error("Problem not loaded. Call loadProblem() first.");
-    }
-
-    if (guided_planning_results_.empty()) {
-        throw std::runtime_error(
-            "Guided paths not computed. Call computeGuidedPaths() first.");
-    }
-
-    // Clear previous segments
-    path_segments_.clear();
-    path_segments_.resize(robots_.size());
-
-    for (size_t robot_idx = 0; robot_idx < guided_planning_results_.size(); ++robot_idx) {
-        const auto& result = guided_planning_results_[robot_idx];
-
-        if (!result.success || !result.path) {
-            continue;
-        }
-
-        auto& path = result.path;
-        
-        /// TODO: How do we properly get the mapping from timesteps to robot configurations for geometric paths?
-        ///       Should we convert to PathControl for this?
-        size_t path_length = path->getStateCount();
-        if (path_length == 0) {
-            continue;
-        }
-
-        // Segment the path
-        int current_timestep = 0;
-        size_t segment_idx = 0;
-        size_t path_idx = 0;
-
-        while (path_idx < path_length) {
-            PathSegment segment;
-            segment.robot_index = robot_idx;
-            segment.segment_index = segment_idx;
-            segment.start_timestep = current_timestep;
-
-            // Start state is the current state we're at
-            segment.start_state = path->getState(path_idx < path_length ? path_idx : path_length);
-            segment.total_duration = 0.0;
-
-            int timesteps_in_segment = 0;
-
-            // Accumulate cfgs until we reach segment_timesteps
-            while (path_idx < path_length && timesteps_in_segment < config_.segment_timesteps) {
-                segment.states.push_back(path->getState(path_idx < path_length ? path_idx : path_length));
-                segment.total_duration += 1.0;
-                timesteps_in_segment++;
-                path_idx++;   
-            }
-
-            segment.end_timestep = current_timestep + timesteps_in_segment;
-            current_timestep = segment.end_timestep;
-
-            // Set end state (state we'll be at after this segment)
-            segment.end_state = path->getState(path_idx < path_length ? path_idx : path_length-1);
-            // DOUT << "Path: path_idx-> " << path_idx << " w/ path_length-> " << path_length <<std::endl;
-
-            path_segments_[robot_idx].push_back(segment);
-            segment_idx++;
-        }
-
-        DOUT << "Robot " << robot_idx << " created " << path_segments_[robot_idx].size() << " segments." << std::endl;    }
-
-        // for (size_t robot_idx = 0; robot_idx < guided_planning_results_.size(); ++robot_idx) {
-        //     DOUT << "Robot " << robot_idx << " path segments!" << std::endl;
-        //     for (auto path_segment : path_segments_[robot_idx]) {
-        //         std::vector<double> start_state;
-        //         std::vector<double> end_state;
-        //         robot_sis_[robot_idx]->getStateSpace()->copyToReals(start_state, path_segment.start_state);
-        //         robot_sis_[robot_idx]->getStateSpace()->copyToReals(end_state, path_segment.end_state);
-        //         DOUT << "Segment start: [";
-        //         for (size_t i = 0; i < start_state.size(); ++i) DOUT << (i ? ", " : "") << start_state[i];
-        //         DOUT << "], Segment end: [";
-        //         for (size_t i = 0; i < end_state.size(); ++i) DOUT << (i ? ", " : "") << end_state[i];
-        //         DOUT << "]" << std::endl;
-        //     }
-        // }
-    }
-
-bool CipherGeometricPlanner::checkSegmentsForConflicts() {
-    // DOUT << "Checking segments for conflicts..." << std::endl;
+bool CipherGeometricPlanner::checkPathsForConflicts() {
     segment_conflicts_.clear();
 
-    // Handle edge cases
-    if (path_segments_.empty()) {
-        return false; // No segments to check
-    }
+    if (robot_paths_.empty()) return false;
 
-    // Check if any robot has segments
-    bool any_robot_has_segments = false;
-    for (const auto& robot_segments : path_segments_) {
-        if (!robot_segments.empty()) {
-            any_robot_has_segments = true;
-            break;
-        }
+    bool any_path = false;
+    for (const auto& p : robot_paths_) {
+        if (p && p->getStateCount() > 0) { any_path = true; break; }
     }
+    if (!any_path) return false;
 
-    if (!any_robot_has_segments) {
-        return false;
-    }
-
-    // Find the global maximum timestep across ALL robots and ALL segments
-    // This ensures we check every timestep where any robot is still moving
     int max_timestep = 0;
-    for (size_t robot_idx = 0; robot_idx < robots_.size(); ++robot_idx) {
-        if (!path_segments_[robot_idx].empty()) {
-            const auto& last_segment = path_segments_[robot_idx].back();
-            max_timestep = std::max(max_timestep, last_segment.end_timestep);
-        }
+    for (size_t r = 0; r < robot_paths_.size(); ++r) {
+        if (robot_paths_[r])
+            max_timestep = std::max(max_timestep, static_cast<int>(robot_paths_[r]->getStateCount()));
     }
+    if (max_timestep == 0) return false;
 
-    if (max_timestep == 0) {
-        return false;  // No timesteps to check
-    }
+    if (robots_.size() < 2) return false;
 
-    // Allocate states for each robot (one per robot for current timestep)
-    std::vector<ob::State*> current_states(robots_.size(), nullptr);
-    for (size_t i = 0; i < robots_.size(); ++i) {
-        current_states[i] = robots_[i]->getSpaceInformation()->getStateSpace()->allocState();
-    }
-
-    // Iterate over ALL absolute timesteps to ensure complete coverage
     for (int timestep = 0; timestep < max_timestep; ++timestep) {
-
-        // Propagate each robot to this absolute timestep
-        for (size_t robot_idx = 0; robot_idx < robots_.size(); ++robot_idx) {
-            if (path_segments_[robot_idx].empty()) continue;
-
-            // Find the segment that contains this timestep
-            const PathSegment* seg = findSegmentAtTimestep(robot_idx, timestep);
-
-            if (seg != nullptr) {
-                // Robot has a segment at this timestep - propagate to it
-                propagateToTimestep(robot_idx, seg->segment_index, timestep, current_states[robot_idx]);
-            } else {
-                // Robot's path has ended - use final state (goal)
-                const auto& last_segment = path_segments_[robot_idx].back();
-                robots_[robot_idx]->getSpaceInformation()->copyState(
-                    current_states[robot_idx], last_segment.end_state);
-            }
-        }
-
-        // Check robot-robot conflicts (only if 2+ robots)
-        if (robots_.size() >= 2) {
-            for (size_t i = 0; i < robots_.size(); ++i) {
-                if (path_segments_[i].empty()) continue;
-
-                for (size_t j = i + 1; j < robots_.size(); ++j) {
-                    if (path_segments_[j].empty()) continue;
-
-                    size_t part_i, part_j;
-                    if (checkTwoRobotConflict(i, current_states[i], j, current_states[j], part_i, part_j)) {
-                        // Record conflict
-                        SegmentConflict conflict;
-                        conflict.type = SegmentConflict::ROBOT_ROBOT;
-                        conflict.robot_index_1 = i;
-                        conflict.robot_index_2 = j;
-                        conflict.timestep = timestep;
-                        conflict.part_index_1 = part_i;
-                        conflict.part_index_2 = part_j;
-
-                        // Find which segment each robot is in at this timestep
-                        const PathSegment* seg_i = findSegmentAtTimestep(i, timestep);
-                        const PathSegment* seg_j = findSegmentAtTimestep(j, timestep);
-
-                        conflict.segment_index_1 = seg_i ? seg_i->segment_index : path_segments_[i].size() - 1;
-                        conflict.segment_index_2 = seg_j ? seg_j->segment_index : path_segments_[j].size() - 1;
-
-                        segment_conflicts_.push_back(conflict);
-                    }
+        for (size_t i = 0; i < robots_.size(); ++i) {
+            ob::State* si = getStateAtTimestep(i, timestep);
+            if (!si) continue;
+            for (size_t j = i + 1; j < robots_.size(); ++j) {
+                ob::State* sj = getStateAtTimestep(j, timestep);
+                if (!sj) continue;
+                size_t part_i, part_j;
+                if (checkTwoRobotConflict(i, si, j, sj, part_i, part_j)) {
+                    SegmentConflict conflict;
+                    conflict.type = SegmentConflict::ROBOT_ROBOT;
+                    conflict.robot_index_1 = i;
+                    conflict.robot_index_2 = j;
+                    conflict.timestep = timestep;
+                    conflict.part_index_1 = part_i;
+                    conflict.part_index_2 = part_j;
+                    segment_conflicts_.push_back(conflict);
                 }
             }
-        }
-    }
-
-    // Free allocated states
-    for (size_t i = 0; i < current_states.size(); ++i) {
-        if (current_states[i]) {
-            robots_[i]->getSpaceInformation()->getStateSpace()->freeState(current_states[i]);
         }
     }
 
@@ -757,7 +610,7 @@ void CipherGeometricPlanner::cleanup() {
     robots_.clear();
     high_level_paths_.clear();
     guided_planning_results_.clear();
-    path_segments_.clear();
+    robot_paths_.clear();
     collision_manager_.reset();
     problem_loaded_ = false;
     resolution_stats_ = ResolutionStats();  // Reset resolution statistics
@@ -774,51 +627,6 @@ std::vector<fcl::CollisionObjectf*> CipherGeometricPlanner::getObstaclesInRegion
     return {};
 }
 
-const PathSegment* CipherGeometricPlanner::findSegmentAtTimestep(size_t robot_idx, int timestep) const {
-    // DOUT << "Finding segment at timestep..." << std::endl;
-    if (robot_idx >= path_segments_.size()) {
-        return nullptr;
-    }
-
-    const auto& segments = path_segments_[robot_idx];
-    for (const auto& segment : segments) {
-        if (segment.start_timestep <= timestep && timestep < segment.end_timestep) {
-            return &segment;
-        }
-    }
-    return nullptr;
-}
-
-void CipherGeometricPlanner::propagateToTimestep(size_t robot_idx, size_t segment_idx, int timestep, ob::State* result) const {
-    // DOUT << "Propagating to timestep..." << std::endl;
-    const auto& segment = path_segments_[robot_idx][segment_idx];
-    auto si = robots_[robot_idx]->getSpaceInformation();
-
-    // Validate that timestep is within the segment's range
-    if (timestep < segment.start_timestep || timestep >= segment.end_timestep) {
-        std::cerr << "ERROR: propagateToTimestep called with invalid timestep!" << std::endl;
-        std::cerr << "  robot_idx=" << robot_idx << ", segment_idx=" << segment_idx << std::endl;
-        std::cerr << "  timestep=" << timestep << std::endl;
-        std::cerr << "  segment.start_timestep=" << segment.start_timestep << std::endl;
-        std::cerr << "  segment.end_timestep=" << segment.end_timestep << std::endl;
-
-        // Clamp to valid range as a fallback
-        if (timestep < segment.start_timestep) {
-            timestep = segment.start_timestep;
-        } else {
-            timestep = segment.end_timestep - 1;
-        }
-    }
-
-    // Direct index lookup: segment.states[k] is the state at absolute timestep
-    // (start_timestep + k), mirroring PP.cpp's invariant of array index == timestep.
-    int relative_timestep = timestep - segment.start_timestep;
-    if (relative_timestep < static_cast<int>(segment.states.size())) {
-        si->copyState(result, segment.states[relative_timestep]);
-    } else {
-        si->copyState(result, segment.end_state);
-    }
-}
 
 bool CipherGeometricPlanner::checkTwoRobotConflict(size_t robot_idx_1, const ob::State* state_1,
                                                size_t robot_idx_2, const ob::State* state_2,
@@ -1084,37 +892,17 @@ bool CipherGeometricPlanner::resolveWithHierarchicalExpansionRefinement(
     ob::State* state_1 = robots_[robot_1]->getSpaceInformation()->getStateSpace()->allocState();
     ob::State* state_2 = robots_[robot_2]->getSpaceInformation()->getStateSpace()->allocState();
 
-    // Locate conflict region - handle robots that have finished their paths (stationary at goal)
-    const PathSegment* seg_1 = findSegmentAtTimestep(robot_1, conflict.timestep);
-    const PathSegment* seg_2 = findSegmentAtTimestep(robot_2, conflict.timestep);
-
-    // Get state for robot 1 at conflict time
-    if (seg_1) {
-        propagateToTimestep(robot_1, seg_1->segment_index, conflict.timestep, state_1);
-    } else if (!path_segments_[robot_1].empty()) {
-        // Robot has reached its goal - use final state
-        const auto& last_seg = path_segments_[robot_1].back();
-        robots_[robot_1]->getSpaceInformation()->copyState(state_1, last_seg.end_state);
-    } else {
-        DOUT << "    Robot " << robot_1 << " has no path segments" << std::endl;
+    // Locate conflict region
+    ob::State* s1 = getStateAtTimestep(robot_1, conflict.timestep);
+    ob::State* s2 = getStateAtTimestep(robot_2, conflict.timestep);
+    if (!s1 || !s2) {
+        DOUT << "    Robot has no path at conflict timestep" << std::endl;
         robots_[robot_1]->getSpaceInformation()->getStateSpace()->freeState(state_1);
         robots_[robot_2]->getSpaceInformation()->getStateSpace()->freeState(state_2);
         return false;
     }
-
-    // Get state for robot 2 at conflict time (needed for potential future use)
-    if (seg_2) {
-        propagateToTimestep(robot_2, seg_2->segment_index, conflict.timestep, state_2);
-    } else if (!path_segments_[robot_2].empty()) {
-        // Robot has reached its goal - use final state
-        const auto& last_seg = path_segments_[robot_2].back();
-        robots_[robot_2]->getSpaceInformation()->copyState(state_2, last_seg.end_state);
-    } else {
-        DOUT << "    Robot " << robot_2 << " has no path segments" << std::endl;
-        robots_[robot_1]->getSpaceInformation()->getStateSpace()->freeState(state_1);
-        robots_[robot_2]->getSpaceInformation()->getStateSpace()->freeState(state_2);
-        return false;
-    }
+    robots_[robot_1]->getSpaceInformation()->copyState(state_1, s1);
+    robots_[robot_2]->getSpaceInformation()->copyState(state_2, s2);
     int conflict_region = decomp_->locateRegion(state_1);
 
     DOUT << "    Conflict in region " << conflict_region << std::endl;
@@ -1130,13 +918,6 @@ bool CipherGeometricPlanner::resolveWithHierarchicalExpansionRefinement(
         if (isTimeoutExceeded()) {
             std::cerr << "    Timeout during hierarchical expansion at layer " << expansion_layer << std::endl;
             return false;
-        }
-
-        // Check termination: expansion covers the whole decomposition
-        if (expansion_layer > 0 && expansionCoversFullDecomposition(expansion_layer)) {
-            DOUT << "    Expansion layer " << expansion_layer
-                      << " covers entire decomposition, stopping expansion" << std::endl;
-            break;
         }
 
         // Reset cells refined in previous expansion layers before considering the wider region set.
@@ -1174,6 +955,7 @@ bool CipherGeometricPlanner::resolveWithHierarchicalExpansionRefinement(
 
         // Get expanded region for this layer
         std::vector<int> expanded_regions = getExpandedRegion(conflict_region, expansion_layer);
+        bool covers_full_decomp = ((int)expanded_regions.size() >= decomp_->getNumRegions());
 
         DOUT << "    Expansion layer " << expansion_layer
                   << ": " << expanded_regions.size() << " regions" << std::endl;
@@ -1200,6 +982,12 @@ bool CipherGeometricPlanner::resolveWithHierarchicalExpansionRefinement(
         // Refinement at this expansion level failed, expand further
         DOUT << "    All refinement levels exhausted at expansion layer " << expansion_layer
                   << ", trying wider expansion..." << std::endl;
+
+        if (covers_full_decomp) {
+            DOUT << "    Expansion layer " << expansion_layer
+                      << " covers entire decomposition, stopping expansion" << std::endl;
+            break;
+        }
     }
 
     // All expansion levels exhausted
@@ -1408,8 +1196,14 @@ bool CipherGeometricPlanner::refineExpandedRegion(
 
     // Validate that entry/exit states of robots to replan are within local decomposition bounds
     bool states_in_bounds = true;
-    for (const auto* state : replan_starts) {
-        start_regions.push_back(decomp_->locateSubRegion(state));
+
+    for (int i = 0; i < replan_hl_starts.size(); ++i) {
+        // const auto* start_state = replan_starts[i];
+        const auto* start_region_state = replan_hl_starts[i];
+
+        // auto planning_region = decomp_->locateSubRegion(start_state);
+        start_regions.push_back(decomp_->locateSubRegion(start_region_state));
+
         if (start_regions.back() < 0) {
             states_in_bounds = false;
             DOUT << "        Entry state outside local decomposition bounds" << std::endl;
@@ -1419,13 +1213,17 @@ bool CipherGeometricPlanner::refineExpandedRegion(
             }
             DOUT << " " << std::endl;
             
-            robots_[0]->getSpaceInformation()->getStateSpace()->printState(state, DOUT);
+            robots_[0]->getSpaceInformation()->getStateSpace()->printState(start_region_state, DOUT);
             break;
         }
     }
     if (states_in_bounds) {
-        for (const auto* state : replan_goals) {
-            goal_regions.push_back(decomp_->locateSubRegion(state));
+        for (int i = 0; i < replan_hl_goals.size(); ++i) {
+            // const auto* start_state = replan_starts[i];
+            const auto* goal_region_state = replan_hl_goals[i];
+
+            // auto planning_region = decomp_->locateSubRegion(start_state);
+            goal_regions.push_back(decomp_->locateSubRegion(goal_region_state));
             if (goal_regions.back() < 0) {
                 states_in_bounds = false;
                 DOUT << "        Exit state outside local decomposition bounds" << std::endl;
@@ -1434,10 +1232,47 @@ bool CipherGeometricPlanner::refineExpandedRegion(
                     DOUT << "[" << decomp_->getBounds().low[n] << ":" << decomp_->getBounds().high[n] << "]";
                 }
                 DOUT << " " <<std::endl;
-                robots_[0]->getSpaceInformation()->getStateSpace()->printState(state, DOUT);
+                robots_[0]->getSpaceInformation()->getStateSpace()->printState(goal_region_state, DOUT);
                 break;
             }
         }
+    }
+    // for (const auto* state : replan_starts) {
+    //     start_regions.push_back(decomp_->locateSubRegion(state));
+    //     if (start_regions.back() < 0) {
+    //         states_in_bounds = false;
+    //         DOUT << "        Entry state outside local decomposition bounds" << std::endl;
+    //         DOUT << "Local Decomp Bounds: ";
+    //         for (size_t n =0; n < decomp_->getBounds().low.size(); ++n) {
+    //             DOUT << "[" << decomp_->getBounds().low[n] << ":" << decomp_->getBounds().high[n] << "]";
+    //         }
+    //         DOUT << " " << std::endl;
+            
+    //         robots_[0]->getSpaceInformation()->getStateSpace()->printState(state, DOUT);
+    //         break;
+    //     }
+    // }
+    // if (states_in_bounds) {
+    //     for (const auto* state : replan_goals) {
+    //         goal_regions.push_back(decomp_->locateSubRegion(state));
+    //         if (goal_regions.back() < 0) {
+    //             states_in_bounds = false;
+    //             DOUT << "        Exit state outside local decomposition bounds" << std::endl;
+    //             DOUT << "Local Decomp Bounds: ";
+    //             for (size_t n =0; n < decomp_->getBounds().low.size(); ++n) {
+    //                 DOUT << "[" << decomp_->getBounds().low[n] << ":" << decomp_->getBounds().high[n] << "]";
+    //             }
+    //             DOUT << " " <<std::endl;
+    //             robots_[0]->getSpaceInformation()->getStateSpace()->printState(state, DOUT);
+    //             break;
+    //         }
+    //     }
+    // }
+
+    for (size_t i = 0; i < start_regions.size() || i < goal_regions.size(); ++i) {
+        if (i < start_regions.size()) DOUT << "Start[" << i << "]: " << start_regions[i] << "  ";
+        if (i < goal_regions.size())  DOUT << "Goal[" << i << "]: " << goal_regions[i];
+        DOUT << std::endl;
     }
 
     std::set<int> sts(start_regions.begin(), start_regions.end());
@@ -1615,6 +1450,11 @@ bool CipherGeometricPlanner::refineExpandedRegion(
             }
         }
 
+        // Invalidate cached bounds for this robot pair — paths were just updated,
+        // so any stored PathUpdateInfo (including planning_exit_state) is now stale.
+        robot_pair_refinement_info.erase(std::make_pair(robot_1, robot_2));
+        robot_pair_refinement_info.erase(std::make_pair(robot_2, robot_1));
+
         // Record integrated paths
         if (do_viz_) {
             for (size_t i = 0; i < replan_robot_indices.size(); ++i) {
@@ -1708,16 +1548,6 @@ int CipherGeometricPlanner::calculateMaxExpansionLayers() const {
     // return (grid_side + 1) / 2;  // ceil(grid_side / 2)
 }
 
-bool CipherGeometricPlanner::expansionCoversFullDecomposition(int expansion_layers) const {
-    DOUT << "Checking if expansion covers full decomposition..." << std::endl;
-    int num_regions = decomp_->getNumRegions();
-
-    // For a 2D grid, expansion by L layers from center gives at most (2L+1)^2 cells
-    // If (2L+1)^2 >= num_regions, we've covered everything
-    int max_cells_in_expansion = (2 * expansion_layers + 1) * (2 * expansion_layers + 1);
-
-    return max_cells_in_expansion >= num_regions;
-}
 
 void CipherGeometricPlanner::freeUpdateInfoStates(
     size_t robot_1, size_t robot_2,
@@ -1822,19 +1652,15 @@ bool CipherGeometricPlanner::extractReplanningBoundsForExpandedRegion(
         info.robot_index = robot_idx;
 
         auto si = robots_[robot_idx]->getSpaceInformation();
-        ob::State* temp_state = si->getStateSpace()->allocState();
 
         int conflict_ts = conflict.timestep;
 
         // Check if robot has finished its path before the conflict timestep.
-        // In that case, the robot is stationary at its goal — no replanning needed.
-        int path_end_timestep = 0;
-        if (!path_segments_[robot_idx].empty()) {
-            path_end_timestep = path_segments_[robot_idx].back().end_timestep;
-        }
+        int path_end_timestep = robot_paths_[robot_idx]
+            ? static_cast<int>(robot_paths_[robot_idx]->getStateCount()) : 0;
 
         if (conflict_ts >= path_end_timestep) {
-            // Robot is stationary at goal — all three states collapse to the goal
+            // Robot is stationary at goal — all states collapse to the goal
             info.region_entry_state = si->getStateSpace()->allocState();
             info.region_exit_state = si->getStateSpace()->allocState();
             info.planning_entry_state = si->getStateSpace()->allocState();
@@ -1846,87 +1672,51 @@ bool CipherGeometricPlanner::extractReplanningBoundsForExpandedRegion(
             info.start_timestep = path_end_timestep;
             info.end_timestep = path_end_timestep;
             info.planning_entry_timestep = path_end_timestep;
-            info.start_segment_idx = path_segments_[robot_idx].empty() ? 0 : path_segments_[robot_idx].size() - 1;
-            info.end_segment_idx = info.start_segment_idx;
-            si->getStateSpace()->freeState(temp_state);
-
             return true;
         }
 
         // Find entry to expanded region (scan backwards from conflict)
         int entry_timestep = 0;
-        size_t entry_segment = 0;
         bool found_entry = false;
         int pre_entry_timestep = -1;
-        size_t pre_entry_segment = 0;
 
         for (int t = conflict_ts; t >= 0; --t) {
-            const PathSegment* seg = findSegmentAtTimestep(robot_idx, t);
-            if (!seg) break;
-
-            propagateToTimestep(robot_idx, seg->segment_index, t, temp_state);
-            int region = decomp_->locateRegion(temp_state);
-
-            // Check if region is NOT in the expanded set
+            ob::State* st = getStateAtTimestep(robot_idx, t);
+            if (!st) break;
+            int region = decomp_->locateRegion(st);
             if (region_set.find(region) == region_set.end()) {
-                // Found entry point (one timestep after leaving the region set)
                 entry_timestep = t + 1;
-                entry_segment = seg->segment_index;
-                if (entry_timestep >= seg->end_timestep &&
-                    seg->segment_index + 1 < path_segments_[robot_idx].size()) {
-                    entry_segment = seg->segment_index + 1;
-                }
                 pre_entry_timestep = t;
-                pre_entry_segment = seg->segment_index;
                 found_entry = true;
                 break;
             }
         }
 
         if (!found_entry) {
-            // Robot starts in the expanded region
             entry_timestep = 0;
-            entry_segment = 0;
         }
 
         // Find exit from expanded region (scan forwards).
-        // Track the last timestep still inside the region so exit_state captures
-        // the last in-region state (used by CBS to locateRegion the ending cell).
         int exit_timestep = -1;
-        size_t exit_segment = 0;
         bool found_exit = false;
-
-        int last_in_region_timestep = conflict_ts;  // conflict is inside by definition
-        size_t last_in_region_segment = 0;
-        if (const PathSegment* s = findSegmentAtTimestep(robot_idx, conflict_ts))
-            last_in_region_segment = s->segment_index;
-
+        int last_in_region_timestep = -1;
         int max_timestep = path_end_timestep;
 
         for (int t = conflict_ts; t < max_timestep; ++t) {
-            const PathSegment* seg = findSegmentAtTimestep(robot_idx, t);
-            if (!seg) break;
-
-            propagateToTimestep(robot_idx, seg->segment_index, t, temp_state);
-            int region = decomp_->locateRegion(temp_state);
-
-            // Check if region is NOT in the expanded set
+            ob::State* st = getStateAtTimestep(robot_idx, t);
+            if (!st) break;
+            int region = decomp_->locateRegion(st);
             if (region_set.find(region) == region_set.end()) {
                 exit_timestep = t;
-                exit_segment = seg->segment_index;
                 found_exit = true;
+                last_in_region_timestep = t-1;
                 break;
             }
-
-            // Still inside — record as candidate last-in-region state
-            last_in_region_timestep = t;
-            last_in_region_segment = seg->segment_index;
+            
         }
 
         if (!found_exit) {
-            // Robot's goal is in the expanded region (or robot has finished its path)
             exit_timestep = max_timestep;
-            exit_segment = path_segments_[robot_idx].size() - 1;  // Use last valid segment index
         }
 
         // Allocate all four boundary states.
@@ -1935,35 +1725,36 @@ bool CipherGeometricPlanner::extractReplanningBoundsForExpandedRegion(
         info.planning_entry_state = si->getStateSpace()->allocState();
         info.planning_exit_state = si->getStateSpace()->allocState();
 
-        // region_entry_state: first state inside the expanded region (at entry_timestep)
-        // planning_entry_state: last state outside the expanded region (just before entry)
         if (!found_entry) {
-            // Robot starts inside the region — no outside predecessor
             si->copyState(info.region_entry_state, start_states_[robot_idx]);
             si->copyState(info.planning_entry_state, start_states_[robot_idx]);
         } else {
-            propagateToTimestep(robot_idx, entry_segment, entry_timestep, info.region_entry_state);
-            propagateToTimestep(robot_idx, pre_entry_segment, pre_entry_timestep, info.planning_entry_state);
+            si->copyState(info.region_entry_state, getStateAtTimestep(robot_idx, entry_timestep));
+            si->copyState(info.planning_entry_state, getStateAtTimestep(robot_idx, pre_entry_timestep));
         }
 
-        // planning_exit_state: first state outside the expanded region (at exit_timestep)
-        // region_exit_state:   last state inside the expanded region (at last_in_region_timestep)
         if (exit_timestep >= max_timestep) {
-            // Goal is inside the region — both collapse to the goal
             si->copyState(info.planning_exit_state, goal_states_[robot_idx]);
             si->copyState(info.region_exit_state, goal_states_[robot_idx]);
         } else {
-            propagateToTimestep(robot_idx, exit_segment, exit_timestep, info.planning_exit_state);
-            propagateToTimestep(robot_idx, last_in_region_segment, last_in_region_timestep, info.region_exit_state);
+            si->copyState(info.planning_exit_state, getStateAtTimestep(robot_idx, exit_timestep));
+            if (last_in_region_timestep >= 0) {
+                si->copyState(info.region_exit_state, getStateAtTimestep(robot_idx, last_in_region_timestep));
+            } else {
+                si->copyState(info.region_exit_state, info.planning_exit_state);
+            }
         }
+
+        si->getStateSpace()->printState(info.planning_entry_state, std::cout);
+        si->getStateSpace()->printState(info.region_entry_state, std::cout);
+
+        si->getStateSpace()->printState(info.planning_exit_state, std::cout);
+        si->getStateSpace()->printState(info.region_exit_state, std::cout);
 
         info.start_timestep = entry_timestep;
         info.end_timestep = exit_timestep;
         info.planning_entry_timestep = (pre_entry_timestep >= 0) ? pre_entry_timestep : 0;
-        info.start_segment_idx = entry_segment;
-        info.end_segment_idx = exit_segment;
 
-        si->getStateSpace()->freeState(temp_state);
         return true;
     };
 
@@ -2019,10 +1810,9 @@ void CipherGeometricPlanner::integrateRefinedPaths(
         }
 
         if (original_path && result.path) {
-            // Create a new path that combines the three parts
             auto spliced_path = std::make_shared<og::PathGeometric>(si);
 
-            // Part 1: Find the entry state index in the original path
+            // Part 1: copy original up to and including the entry state
             size_t entry_state_idx = 0;
             for (size_t s = 0; s < original_path->getStateCount(); ++s) {
                 if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_entry_state) < 1e-3) {
@@ -2031,24 +1821,14 @@ void CipherGeometricPlanner::integrateRefinedPaths(
                     break;
                 }
             }
-
-            DOUT << "      Entry state found at index " << entry_state_idx << std::endl;
-
-            // Part 1: Copy states from original path up to and including entry
-            for (size_t s = 0; s <= entry_state_idx; ++s) {
+            for (size_t s = 0; s <= entry_state_idx; ++s)
                 spliced_path->append(original_path->getState(s));
-            }
 
-            DOUT << "spliced path len: " << spliced_path->getStateCount() << std::endl;
-
-            // Part 2: Add all states from the refined path
-            for (size_t s = 0; s < result.path->getStateCount(); ++s) {
+            // Part 2: all refined path states
+            for (size_t s = 0; s < result.path->getStateCount(); ++s)
                 spliced_path->append(result.path->getState(s));
-            }
 
-            DOUT << "spliced path len: " << spliced_path->getStateCount() << std::endl;
-
-            // Part 3: Find exit state index in the original path
+            // Part 3: original path after the exit state
             size_t exit_state_idx = original_path->getStateCount() - 1;
             for (size_t s = entry_state_idx; s < original_path->getStateCount(); ++s) {
                 if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_exit_state) < 1e-3) {
@@ -2057,92 +1837,42 @@ void CipherGeometricPlanner::integrateRefinedPaths(
                     break;
                 }
             }
-
-            // Part 3: Copy states from original path after exit
-            for (size_t s = exit_state_idx + 1; s < original_path->getStateCount(); ++s) {
+            for (size_t s = exit_state_idx + 1; s < original_path->getStateCount(); ++s)
                 spliced_path->append(original_path->getState(s));
-            }
-
-            DOUT << "spliced path len: " << spliced_path->getStateCount() << std::endl;
 
             DOUT << "      Spliced path has " << spliced_path->getStateCount() << " states" << std::endl;
 
-            // Update the guided planning result with the spliced path
             guided_planning_results_[robot_idx].path = spliced_path;
-
-            // Re-segment the entire updated path from scratch
-            std::vector<PathSegment> new_segments;
-            segmentSinglePath(robot_idx, spliced_path, 0, new_segments);
-            path_segments_[robot_idx] = new_segments;
-
-            DOUT << "      Re-segmented path has " << new_segments.size() << " segments" << std::endl;
+            robot_paths_[robot_idx] = spliced_path;
         } else {
-            // If we can't splice, fall back torefined path
             guided_planning_results_[robot_idx] = result;
-
-            // Re-segment the refined path
-            std::vector<PathSegment> new_segments;
-            segmentSinglePath(robot_idx, result.path, 0, new_segments);
-            path_segments_[robot_idx] = new_segments;
+            robot_paths_[robot_idx] = result.path;
         }
     }
 }
 
 void CipherGeometricPlanner::recheckConflictsFromTimestep(int start_timestep) {
-    DOUT << "Re-checking conflicts from timestep..." << std::endl;
-    DOUT << "    Re-checking conflicts from timestep " << start_timestep << std::endl;
+    DOUT << "Re-checking conflicts from timestep " << start_timestep << std::endl;
 
-    // Clear all conflicts
     segment_conflicts_.clear();
 
-    // Find the maximum timestep across all robots
     int max_timestep = 0;
-    for (const auto& robot_segments : path_segments_) {
-        if (!robot_segments.empty()) {
-            max_timestep = std::max(max_timestep, robot_segments.back().end_timestep);
-        }
+    for (size_t r = 0; r < robot_paths_.size(); ++r) {
+        if (robot_paths_[r])
+            max_timestep = std::max(max_timestep, static_cast<int>(robot_paths_[r]->getStateCount()));
     }
 
-    // Allocate states for each robot
-    std::vector<ob::State*> current_states(robots_.size(), nullptr);
-    for (size_t i = 0; i < robots_.size(); ++i) {
-        current_states[i] = robots_[i]->getSpaceInformation()->getStateSpace()->allocState();
-    }
+    if (robots_.size() < 2) return;
 
-    // Check conflicts at each timestep
     for (int timestep = start_timestep; timestep < max_timestep; ++timestep) {
-        // Propagate each robot to this timestep
-        for (size_t robot_idx = 0; robot_idx < robots_.size(); ++robot_idx) {
-            if (path_segments_[robot_idx].empty()) continue;
-
-            // Find the segment that contains this timestep for this robot
-            const PathSegment* seg = findSegmentAtTimestep(robot_idx, timestep);
-
-            if (seg != nullptr) {
-                propagateToTimestep(robot_idx, seg->segment_index, timestep,
-                                    current_states[robot_idx]);
-            } else {
-                // Robot's path has ended, use final state
-                const auto& last_segment = path_segments_[robot_idx].back();
-                robots_[robot_idx]->getSpaceInformation()->copyState(
-                    current_states[robot_idx], last_segment.end_state);
-            }
-        }
-
-        // Check robot-robot conflicts at this timestep
         for (size_t i = 0; i < robots_.size(); ++i) {
-            if (path_segments_[i].empty()) continue;
-
+            ob::State* si = getStateAtTimestep(i, timestep);
+            if (!si) continue;
             for (size_t j = i + 1; j < robots_.size(); ++j) {
-                if (path_segments_[j].empty()) continue;
-
+                ob::State* sj = getStateAtTimestep(j, timestep);
+                if (!sj) continue;
                 size_t part_i, part_j;
-                if (checkTwoRobotConflict(i, current_states[i], j,
-                                        current_states[j], part_i, part_j)) {
-                    // Found a conflict - record it and stop
-                    const PathSegment* seg_i = findSegmentAtTimestep(i, timestep);
-                    const PathSegment* seg_j = findSegmentAtTimestep(j, timestep);
-
+                if (checkTwoRobotConflict(i, si, j, sj, part_i, part_j)) {
                     SegmentConflict coll;
                     coll.type = SegmentConflict::ROBOT_ROBOT;
                     coll.robot_index_1 = i;
@@ -2150,34 +1880,11 @@ void CipherGeometricPlanner::recheckConflictsFromTimestep(int start_timestep) {
                     coll.timestep = timestep;
                     coll.part_index_1 = part_i;
                     coll.part_index_2 = part_j;
-
-                    if (seg_i != nullptr) {
-                        coll.segment_index_1 = seg_i->segment_index;
-                    } else if (!path_segments_[i].empty()) {
-                        coll.segment_index_1 = path_segments_[i].size() - 1;
-                    }
-
-                    if (seg_j != nullptr) {
-                        coll.segment_index_2 = seg_j->segment_index;
-                    } else if (!path_segments_[j].empty()) {
-                        coll.segment_index_2 = path_segments_[j].size() - 1;
-                    }
-
                     segment_conflicts_.push_back(coll);
-
-                    // Only report first conflict found
                     DOUT << "    Found robot-robot conflict at timestep " << timestep << std::endl;
-                    goto cleanup;
+                    return;
                 }
             }
-        }
-    }
-
-cleanup:
-    // Free allocated states
-    for (size_t i = 0; i < current_states.size(); ++i) {
-        if (current_states[i]) {
-            robots_[i]->getSpaceInformation()->getStateSpace()->freeState(current_states[i]);
         }
     }
 
@@ -2197,14 +1904,6 @@ int CipherGeometricPlanner::getRecheckStartTimestep(
               << " (conflict timestep was " << conflict.timestep << ")" << std::endl;
 
     return result;
-}
-
-void CipherGeometricPlanner::segmentSinglePath(
-    size_t robot_idx,
-    const std::shared_ptr<og::PathGeometric>& path,
-    int start_timestep_offset,
-    std::vector<PathSegment>& segments) {
-    DOUT << "Segmenting single path..." << std::endl;
 }
 
 // Private helpers for subproblem expansion strategies
@@ -2317,23 +2016,14 @@ bool CipherGeometricPlanner::resolveWithLocalCompositePlanner(
 
     // Locate conflict region and get expanded region for the subproblem
     // Handle robots that have finished their paths (stationary at goal)
-    ob::State* temp_state = robots_[robot_1]->getSpaceInformation()->getStateSpace()->allocState();
-    const PathSegment* seg_1 = findSegmentAtTimestep(robot_1, conflict.timestep);
-    if (seg_1) {
-        propagateToTimestep(robot_1, seg_1->segment_index, conflict.timestep, temp_state);
-    } else if (!path_segments_[robot_1].empty()) {
-        // Robot has reached its goal - use final state
-        const auto& last_seg = path_segments_[robot_1].back();
-        robots_[robot_1]->getSpaceInformation()->copyState(temp_state, last_seg.end_state);
-    } else {
-        robots_[robot_1]->getSpaceInformation()->getStateSpace()->freeState(temp_state);
-        DOUT << "    Robot " << robot_1 << " has no path segments" << std::endl;
+    ob::State* s1_at_ts = getStateAtTimestep(robot_1, conflict.timestep);
+    if (!s1_at_ts) {
+        DOUT << "    Robot " << robot_1 << " has no path at conflict timestep" << std::endl;
         attempt.planning_succeeded = false;
         log_entry.attempts.push_back(attempt);
         return false;
     }
-    int conflict_region = decomp_->locateRegion(temp_state);
-    robots_[robot_1]->getSpaceInformation()->getStateSpace()->freeState(temp_state);
+    int conflict_region = decomp_->locateRegion(s1_at_ts);
 
     // Use 2 layers of expansion around the conflict region for local bounds
     std::vector<int> expanded_regions = getExpandedRegion(conflict_region, 2);
