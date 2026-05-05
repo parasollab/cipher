@@ -2573,6 +2573,28 @@ int main(int argc, char** argv)
     if (!result.failure_reason.empty())
         output["failure_reason"] = result.failure_reason;
 
+    if (result.success) {
+        const auto& guided_paths = planner.getGuidedPaths();
+        YAML::Node result_node;
+        for (const auto& gpr : guided_paths) {
+            YAML::Node robot_node;
+            YAML::Node states_list;
+            if (gpr.path) {
+                auto si = gpr.path->getSpaceInformation();
+                for (size_t s = 0; s < gpr.path->getStateCount(); ++s) {
+                    std::vector<double> reals;
+                    si->getStateSpace()->copyToReals(reals, gpr.path->getState(s));
+                    YAML::Node state_node;
+                    for (double v : reals) state_node.push_back(v);
+                    states_list.push_back(state_node);
+                }
+            }
+            robot_node["states"] = states_list;
+            result_node.push_back(robot_node);
+        }
+        output["result"] = result_node;
+    }
+
     try {
         std::ofstream fout(outputFile);
         fout << output;

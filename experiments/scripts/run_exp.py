@@ -7,6 +7,7 @@ import yaml
 import numpy as np
 
 METHOD_EXECUTABLES = {
+    'geometric_cipher':   'geometric_cipher',
     'coupled_rrt':        'geometric_coupled_rrt',
     'decoupled_rrt':      'geometric_decoupled_rrt',
     'srrt':               'srrt',
