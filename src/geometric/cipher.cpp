@@ -210,35 +210,51 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
     CipherGeometricResult result;
     planning_start_time_ = std::chrono::steady_clock::now();
 
+    forbidden_edges_.clear();
+
     try {
-        // Phase 1: Compute high-level paths over decomposition
-        DOUT << "[Phase 1] Computing high-level paths..." << std::endl;
-        computeHighLevelPaths();
-        DOUT << "[Phase 1] High-level paths computed" << std::endl;
+        // Phase 1+2: CBS high-level paths + guided paths, with forbidden-edge retry
+        int blocked_edge_attempts = 0;
+        while (true) {
+            DOUT << "[Phase 1] Computing high-level paths (attempt "
+                 << blocked_edge_attempts + 1 << ")..." << std::endl;
+            computeHighLevelPaths();
+            DOUT << "[Phase 1] High-level paths computed" << std::endl;
 
-        if (isTimeoutExceeded()) {
-            std::cerr << "Planning timeout exceeded after computing high-level paths" << std::endl;
-            result.success = false;
-            result.failure_reason = "timeout_high_level_paths";
-            auto end_time = std::chrono::steady_clock::now();
-            result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
-            result.resolution_stats = resolution_stats_;
-            return result;
-        }
+            if (isTimeoutExceeded()) {
+                std::cerr << "Planning timeout exceeded after computing high-level paths" << std::endl;
+                result.success = false;
+                result.failure_reason = "timeout_high_level_paths";
+                auto end_time = std::chrono::steady_clock::now();
+                result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
+                result.resolution_stats = resolution_stats_;
+                return result;
+            }
 
-        // Phase 2: Compute guided paths for each robot
-        DOUT << "[Phase 2] Computing guided paths..." << std::endl;
-        computeGuidedPaths();
-        DOUT << "[Phase 2] Guided paths computed" << std::endl;
+            size_t prev_forbidden_count = forbidden_edges_.size();
 
-        if (isTimeoutExceeded()) {
-            std::cerr << "Planning timeout exceeded after computing guided paths" << std::endl;
-            result.success = false;
-            result.failure_reason = "timeout_guided_paths";
-            auto end_time = std::chrono::steady_clock::now();
-            result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
-            result.resolution_stats = resolution_stats_;
-            return result;
+            DOUT << "[Phase 2] Computing guided paths..." << std::endl;
+            computeGuidedPaths();
+            DOUT << "[Phase 2] Guided paths computed" << std::endl;
+
+            if (isTimeoutExceeded()) {
+                std::cerr << "Planning timeout exceeded after computing guided paths" << std::endl;
+                result.success = false;
+                result.failure_reason = "timeout_guided_paths";
+                auto end_time = std::chrono::steady_clock::now();
+                result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
+                result.resolution_stats = resolution_stats_;
+                return result;
+            }
+
+            bool new_edges_added = forbidden_edges_.size() > prev_forbidden_count;
+            if (!new_edges_added || blocked_edge_attempts >= config_.max_blocked_edge_retries)
+                break;
+
+            ++blocked_edge_attempts;
+            DOUT << "[Retry] " << forbidden_edges_.size()
+                 << " forbidden edge(s); replanning high-level paths" << std::endl;
+            high_level_paths_.clear();
         }
 
         DOUT << "[Phase 3] Checking paths for conflicts..." << std::endl;
@@ -282,7 +298,8 @@ void CipherGeometricPlanner::computeHighLevelPaths() {
     DOUT << "Computing high-level paths..." << std::endl;
     CBS cbs_solver(config_.mapf_config.region_capacity, config_.mapf_config.mapf_timeout,
                     obstacles_, config_.mapf_config.max_obstacle_volume_percent);
-    high_level_paths_ = cbs_solver.solve(decomp_, start_states_, goal_states_);
+    high_level_paths_ = cbs_solver.solve(decomp_, start_states_, goal_states_,
+                                         /*allowed_regions=*/{}, forbidden_edges_);
 
     if (static_cast<int>(high_level_paths_.size()) < start_states_.size()) {
         std::cerr << "CBS failed to find paths for all robots." << std::endl;
@@ -344,12 +361,30 @@ void CipherGeometricPlanner::computeGuidedPaths() {
         planner->setIntermediateStates(true);
         planner->setDecomposition(decomp_);
         planner->setDecompositionPath(high_level_paths_[robot_idx]);
+        if (config_.max_initial_extensions > 0)
+            planner->setMaxExtensions(config_.max_initial_extensions);
         planner->setProblemDefinition(pdef);
         planner->setup();
 
         ob::PlannerStatus status = planner->solve(
             ob::timedPlannerTerminationCondition(config_.planning_time_limit));
-        
+
+        if (config_.max_initial_extensions > 0 &&
+            planner->hitExtensionLimit() &&
+            status != ob::PlannerStatus::EXACT_SOLUTION)
+        {
+            int stuck_idx = planner->getStuckRegionIdx();
+            const auto& dpath = high_level_paths_[robot_idx];
+            if (stuck_idx >= 0 && stuck_idx < (int)dpath.size() - 1) {
+                int from_r = dpath[stuck_idx];
+                int to_r   = dpath[stuck_idx + 1];
+                DOUT << "  Robot " << robot_idx << ": stuck on edge ("
+                     << from_r << " -> " << to_r << "), marking forbidden" << std::endl;
+                forbidden_edges_.insert({from_r, to_r});
+                forbidden_edges_.insert({to_r, from_r});
+            }
+        }
+
         if (status == ob::PlannerStatus::EXACT_SOLUTION ||
             status == ob::PlannerStatus::APPROXIMATE_SOLUTION) {
             auto path = pdef->getSolutionPath()->as<og::PathGeometric>();
@@ -2184,6 +2219,10 @@ int main(int argc, char** argv)
                 config.mapf_config.max_obstacle_volume_percent = cfg["max_obstacle_volume_percent"].as<double>();
             if (cfg["robot_cell_size_ratio"])
                 config.robot_cell_size_ratio = cfg["robot_cell_size_ratio"].as<double>();
+            if (cfg["max_initial_extensions"])
+                config.max_initial_extensions = cfg["max_initial_extensions"].as<int>();
+            if (cfg["max_blocked_edge_retries"])
+                config.max_blocked_edge_retries = cfg["max_blocked_edge_retries"].as<int>();
         } catch (const YAML::Exception& e) {
             std::cerr << "ERROR loading config file: " << e.what() << std::endl;
             return 1;

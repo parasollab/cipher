@@ -3,4 +3,6 @@ max_total_time: 0
 seed: -1
 region_size: 5
 cbs_capacity: 1
-max_obstacle_volume_percent: 0.5
+max_obstacle_volume_percent: 0.8
+max_initial_extensions: 5000
+max_blocked_edge_retries: 3

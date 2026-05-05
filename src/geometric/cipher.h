@@ -17,6 +17,7 @@
 #include "utils/decomposition.h"
 #include "src/geometric/coupled_rrt.h"
 #include "src/guided/guided_geometric_rrt.h"
+#include "src/mapf/cbs.h"
 
 
 namespace ob = ompl::base;
@@ -92,6 +93,10 @@ struct CipherGeometricConfig {
     int seed = -1;  // Random seed (-1 for random)
     double goal_threshold = 0.5;  // Distance threshold for goal satisfaction
     double robot_cell_size_ratio = 1.8;
+
+    // Guided planner extension-limit retry
+    int max_initial_extensions   = 0;  // 0 = time-based only (current behaviour)
+    int max_blocked_edge_retries = 0;  // 0 = no retries (current behaviour)
 
     // Decomposition output directory (empty string disables saving)
     std::string decomposition_output_dir = "";
@@ -332,6 +337,8 @@ private:
     // YAML event log (e.g. 42 → "c17_42").  Populated at setup and updated on every
     // Decompose() call so local_mapf events always emit IDs that viz.py recognises.
     std::unordered_map<int, std::string> region_viz_id_;
+
+    ForbiddenEdgeSet forbidden_edges_;  // Cell edges globally removed from CBS graph
 
     // Helper methods
     void setupDecomposition();

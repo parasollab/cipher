@@ -29,6 +29,10 @@ public:
         decomp_path = path;
     }
 
+    void setMaxExtensions(int n)       { max_extensions_ = n; }
+    bool hitExtensionLimit() const     { return hit_extension_limit_; }
+    int  getStuckRegionIdx() const     { return stuck_region_idx_; }
+
     ob::PlannerStatus solve(const ob::PlannerTerminationCondition &ptc) override
     {
         std::cout << "[GuidedGeoRRT] solve() called" << std::endl;
@@ -59,6 +63,9 @@ public:
             return ob::PlannerStatus::INVALID_START;
         }
 
+        hit_extension_limit_ = false;
+        stuck_region_idx_    = -1;
+
         valid_regions.insert(decomp_path[0]);
 
         Motion *solution = nullptr;
@@ -74,6 +81,11 @@ public:
         while (!ptc)
         {
             ++iteration;
+            if (max_extensions_ > 0 && iteration > max_extensions_) {
+                hit_extension_limit_ = true;
+                stuck_region_idx_    = region_idx;
+                break;
+            }
             bool sample_goal = false;
             // if (iteration % 500 == 1)
             //     std::cout << "[GuidedGeoRRT] iteration=" << iteration
@@ -289,6 +301,10 @@ protected:
     std::unordered_map<int, int> coverage_map;
 
     int min_coverage = 2;
+
+    int  max_extensions_      = 0;
+    bool hit_extension_limit_ = false;
+    int  stuck_region_idx_    = -1;
 
 };
 
