@@ -91,6 +91,7 @@ struct CipherGeometricConfig {
     double max_total_time = 0.0;  // Maximum total planning time in seconds (0 = no limit)
     int seed = -1;  // Random seed (-1 for random)
     double goal_threshold = 0.5;  // Distance threshold for goal satisfaction
+    double robot_cell_size_ratio = 1.8;
 
     // Decomposition output directory (empty string disables saving)
     std::string decomposition_output_dir = "";
@@ -387,6 +388,7 @@ private:
         int refinement_level);
 
     int calculateMaxExpansionLayers() const;
+    int calculateMaxRefinementLevels() const;
 
     // Local composite planner (plans colliding robots jointly in local bounds)
     bool resolveWithLocalCompositePlanner(const SegmentConflict& conflict,

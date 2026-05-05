@@ -310,21 +310,21 @@ BOOST_AUTO_TEST_CASE(MaxDecompositions_CountHalvingsAboveThreshold)
     // Single cell [0,1]^2, side=1.0, minSideLength=0.1:
     // 1.0→0.5→0.25→0.125 (all >0.1), 0.0625 not >0.1 → 3 halvings
     auto d = makeDecomp(1, 2);
-    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.1), 3);
+    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.1, 1.0), 3);
 }
 
 BOOST_AUTO_TEST_CASE(MaxDecompositions_AlreadyTooSmall)
 {
     // 4x4 grid, cells have side 0.25; 0.25/2=0.125 not >0.2 → 0
     auto d = makeDecomp(4, 2);
-    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.2), 0);
+    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.2, 1.0), 0);
 }
 
 BOOST_AUTO_TEST_CASE(MaxDecompositions_ExactHalfIsNotStrictlyAbove)
 {
     // 2x2 grid, cells have side 0.5; 0.5/2=0.25 which is not strictly >0.25 → 0
     auto d = makeDecomp(2, 2);
-    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.25), 0);
+    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.25, 1.0), 0);
 }
 
 BOOST_AUTO_TEST_CASE(MaxDecompositions_VirtualChildRegion)
@@ -334,9 +334,9 @@ BOOST_AUTO_TEST_CASE(MaxDecompositions_VirtualChildRegion)
     auto d = makeDecomp(1, 2);
     d.Decompose(0);
     int child = d.getChildRegions(0)[0];
-    BOOST_CHECK_EQUAL(d.getMaxDecompositions(child, 0.1), 2);
+    BOOST_CHECK_EQUAL(d.getMaxDecompositions(child, 0.1, 1.0), 2);
     // Parent answer unchanged
-    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.1), 3);
+    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.1, 1.0), 3);
 }
 
 BOOST_AUTO_TEST_CASE(MaxDecompositions_AsymmetricBoundsUsesMinSide)
@@ -347,12 +347,12 @@ BOOST_AUTO_TEST_CASE(MaxDecompositions_AsymmetricBoundsUsesMinSide)
     bounds.low[0] = 0.0; bounds.high[0] = 4.0;
     bounds.low[1] = 0.0; bounds.high[1] = 1.0;
     GridDecompositionImpl d(2, bounds, 1.0);
-    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.1), 1);
+    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.1, 1.0), 1);
 }
 
 BOOST_AUTO_TEST_CASE(MaxDecompositions_3D)
 {
     // Single cell [0,1]^3, side=1.0 — same halving logic as 2D
     auto d = makeDecomp(1, 3);
-    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.1), 3);
+    BOOST_CHECK_EQUAL(d.getMaxDecompositions(0, 0.1, 1.0), 3);
 }

@@ -35,7 +35,7 @@ class DecompositionImpl {
     // Extended interface
     virtual void Decompose(int rid) = 0;
     virtual int getDecompositionDepth(int rid) const = 0;
-    virtual int getMaxDecompositions(int rid, double minSideLength) const = 0;
+    virtual int getMaxDecompositions(int rid, double minSideLength, double sizeScaling) const = 0;
     virtual void resetCell(int rid) = 0;
 
     // Returns the total number of regions including virtual sub-regions created

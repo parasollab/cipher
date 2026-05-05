@@ -34,7 +34,7 @@ class RectGridDecompositionImpl : public DecompositionImpl {
     void Decompose(int rid) override {}   // not needed for local refinement decomps
     void resetCell(int /*rid*/) override {}  // no-op: RectGrid does not subdivide cells
     int getDecompositionDepth(int /*rid*/) const override { return 0; }
-    int getMaxDecompositions(int /*rid*/, double /*minSideLength*/) const override { return 0; }
+    int getMaxDecompositions(int /*rid*/, double /*minSideLength*/, double /*sizeScaling*/) const override { return 0; }
 
   private:
     int dim_;
@@ -99,7 +99,7 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
 
     void Decompose(int rid) override;
     int getDecompositionDepth(int rid) const override;
-    int getMaxDecompositions(int rid, double minSideLength) const override;
+    int getMaxDecompositions(int rid, double minSideLength, double sizeScaling) const override;
 
     int locateSubRegion(const ompl::base::State* s) const override;
 

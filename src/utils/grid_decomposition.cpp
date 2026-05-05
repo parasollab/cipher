@@ -435,7 +435,7 @@ int GridDecompositionImpl::getDecompositionDepth(int rid) const
     return depth;
 }
 
-int GridDecompositionImpl::getMaxDecompositions(int rid, double minSideLength) const
+int GridDecompositionImpl::getMaxDecompositions(int rid, double minSideLength, double sizeScaling) const
 {
     const auto& bounds = getBoundsForRegion(rid);
     double minSide = std::numeric_limits<double>::max();
@@ -443,11 +443,12 @@ int GridDecompositionImpl::getMaxDecompositions(int rid, double minSideLength) c
         minSide = std::min(minSide, bounds.high[i] - bounds.low[i]);
     int n = 0;
     double side = minSide / 2.0;
-    while (side > minSideLength)
+    while (side > (minSideLength * sizeScaling))
     {
         ++n;
         side /= 2.0;
     }
+
     return n;
 }
 

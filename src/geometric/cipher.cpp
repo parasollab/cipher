@@ -536,6 +536,8 @@ void CipherGeometricPlanner::setupDecomposition() {
     region_viz_id_.clear();
     for (int r = 0; r < decomp_->getNumRegions(); ++r)
         region_viz_id_[r] = "c" + std::to_string(r);
+
+    config_.conflict_resolution_config.max_refinement_levels = calculateMaxRefinementLevels();
 }
 
 void CipherGeometricPlanner::setupCollisionManager() {
@@ -1504,7 +1506,22 @@ bool CipherGeometricPlanner::refineExpandedRegion(
 int CipherGeometricPlanner::calculateMaxExpansionLayers() const {
     DOUT << "Calculating max expansion layers..." << std::endl;
 
-    // Find the largest bounding-box dimension across all robots and all their parts.
+    // getExpandedRegion uses getAllNeighbors (8-connectivity / Chebyshev distance).
+    // The diameter of an NxN grid under Chebyshev distance is N-1 (corner to corner).
+    // We need this worst-case bound because the conflict cell can be anywhere.
+    int dim = decomp_->getDimension();
+    int num_regions = decomp_->getNumRegions();
+    int grid_side = static_cast<int>(std::round(std::pow(num_regions, 1.0 / dim)));
+    int max_layers = grid_side - 1;
+
+    DOUT << "  Grid: " << num_regions << " regions, side=" << grid_side
+              << ", max expansion layers=" << max_layers << std::endl;
+    return max_layers;
+}
+
+int CipherGeometricPlanner::calculateMaxRefinementLevels() const {
+    DOUT << "Calculating max refinement levels..." << std::endl;
+
     float robot_max_dim = 0.0f;
     for (const auto& robot : robots_) {
         for (size_t part = 0; part < robot->numParts(); ++part) {
@@ -1512,40 +1529,17 @@ int CipherGeometricPlanner::calculateMaxExpansionLayers() const {
             if (geom) {
                 geom->computeLocalAABB();
                 const auto& aabb = geom->aabb_local;
-                for (int d = 0; d < 3; ++d) {
-                    float dim = aabb.max_[d] - aabb.min_[d];
-                    robot_max_dim = std::max(robot_max_dim, dim);
-                }
+                for (int d = 0; d < 3; ++d)
+                    robot_max_dim = std::max(robot_max_dim, aabb.max_[d] - aabb.min_[d]);
             }
         }
     }
-    DOUT << "  Robot max geometry dimension: " << robot_max_dim << std::endl;
 
-    return decomp_->getMaxDecompositions(0, robot_max_dim);
-
-    // // Compute the base cell size from the decomposition bounds.
-    // const auto& bounds = decomp_->getBounds();
-    // int num_regions = decomp_->getNumRegions();
-    // int grid_side = static_cast<int>(std::sqrt(num_regions));
-    // float cell_size = std::numeric_limits<float>::max();
-    // for (int d = 0; d < decomp_->getDimension(); ++d) {
-    //     float span = static_cast<float>(bounds.high[d] - bounds.low[d]);
-    //     float cs = (grid_side > 0) ? (span / grid_side) : span;
-    //     cell_size = std::min(cell_size, cs);
-    // }
-    // DOUT << "  Base cell size (min dim): " << cell_size << std::endl;
-
-    // // Cells must not be smaller than the robot's largest dimension.
-    // // If the grid is already too fine, cap expansion to 1 layer and warn.
-    // if (robot_max_dim > 0.0f && cell_size < robot_max_dim) {
-    //     DOUT << "  WARNING: cell size (" << cell_size
-    //               << ") is smaller than robot max dimension (" << robot_max_dim
-    //               << "). Capping max expansion layers to 1." << std::endl;
-    //     return 1;
-    // }
-
-    // // For a grid decomposition of NxN, the maximum useful expansion from center is N/2.
-    // return (grid_side + 1) / 2;  // ceil(grid_side / 2)
+    // All grid cells are the same size, so region 0 is a valid representative.
+    int max_levels = decomp_->getMaxDecompositions(0, static_cast<double>(robot_max_dim), config_.robot_cell_size_ratio);
+    DOUT << "  Robot max dim: " << robot_max_dim
+              << ", max refinement levels=" << max_levels << std::endl;
+    return max_levels;
 }
 
 
