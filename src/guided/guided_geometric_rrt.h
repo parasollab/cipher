@@ -195,9 +195,9 @@ public:
                         nmotion = motion;
                     }
                     if (skipped > 0)
-                        skipped = 10;
-                        // std::cout << "[GuidedGeoRRT] skipped " << skipped
-                        //           << " intermediate states (wrong region)" << std::endl;
+                        // skipped = 10;
+                        std::cout << "[GuidedGeoRRT] skipped " << skipped
+                                  << " intermediate states (wrong region)" << std::endl;
                     else {
                         // coverage_map[region_idx] += 1;
                         int end_region_idx = decomposition_->locateSubRegion(extension.back()->state);

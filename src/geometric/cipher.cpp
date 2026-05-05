@@ -2182,6 +2182,8 @@ int main(int argc, char** argv)
             if (cfg["cbs_capacity"])    config.mapf_config.region_capacity = cfg["cbs_capacity"].as<int>();
             if (cfg["max_obstacle_volume_percent"])
                 config.mapf_config.max_obstacle_volume_percent = cfg["max_obstacle_volume_percent"].as<double>();
+            if (cfg["robot_cell_size_ratio"])
+                config.robot_cell_size_ratio = cfg["robot_cell_size_ratio"].as<double>();
         } catch (const YAML::Exception& e) {
             std::cerr << "ERROR loading config file: " << e.what() << std::endl;
             return 1;
