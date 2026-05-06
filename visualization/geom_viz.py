@@ -122,7 +122,7 @@ class GeomVisualizer:
         self.fig.canvas.mpl_connect('key_press_event', self._on_key)
 
         self._draw_scene()
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0, 0.82, 1])
         plt.draw()
 
     def _on_key(self, event):
@@ -203,7 +203,8 @@ class GeomVisualizer:
 
         # Legend + title
         if self.paths:
-            self.ax.legend(loc='upper right', fontsize=9)
+            self.ax.legend(loc='upper left', bbox_to_anchor=(1.01, 1),
+                           borderaxespad=0, fontsize=9)
         elif legend_handles:
             start_proxy = mpatches.Patch(facecolor='lightgray', edgecolor='gray',
                                          linestyle='--', lw=2.0, label='Start')
@@ -211,7 +212,8 @@ class GeomVisualizer:
                                          linestyle='-',  lw=2.5, label='Goal')
             self.ax.legend(
                 handles=legend_handles + [start_proxy, goal_proxy],
-                loc='upper right', fontsize=9,
+                loc='upper left', bbox_to_anchor=(1.01, 1),
+                borderaxespad=0, fontsize=9,
             )
 
         if self.paths:

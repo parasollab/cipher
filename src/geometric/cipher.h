@@ -97,6 +97,7 @@ struct CipherGeometricConfig {
     // Guided planner extension-limit retry
     int max_initial_extensions   = 0;  // 0 = time-based only (current behaviour)
     int max_blocked_edge_retries = 0;  // 0 = no retries (current behaviour)
+    int max_no_progress_iters    = 0;  // 0 = disabled; forbid entry edge when coverage stalls
 
     // Decomposition output directory (empty string disables saving)
     std::string decomposition_output_dir = "";
@@ -342,6 +343,7 @@ private:
 
     // Helper methods
     void setupDecomposition();
+    void separateStartCells();
     void setupCollisionManager();
     void setupRobots();
     void cleanup();
