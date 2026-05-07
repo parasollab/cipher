@@ -622,12 +622,12 @@ void CipherGeometricPlanner::cleanup() {
 }
 
 // Private conflict checking helpers
-std::vector<fcl::CollisionObjectf*> CipherGeometricPlanner::getObstaclesInRegion(
-    const std::vector<double>& region_min,
-    const std::vector<double>& region_max) const {
-    DOUT << "Getting obstacles in region..." << std::endl;
-    return {};
-}
+// std::vector<fcl::CollisionObjectf*> CipherGeometricPlanner::getObstaclesInRegion(
+//     const std::vector<double>& region_min,
+//     const std::vector<double>& region_max) const {
+//     DOUT << "Getting obstacles in region..." << std::endl;
+//     return {};
+// }
 
 
 bool CipherGeometricPlanner::checkTwoRobotConflict(size_t robot_idx_1, const ob::State* state_1,
@@ -668,13 +668,13 @@ bool CipherGeometricPlanner::checkTwoRobotConflict(size_t robot_idx_1, const ob:
 }
 
 // Private conflict resolution strategies
-void CipherGeometricPlanner::updateDecomposition() {
-    DOUT << "Updating decomposition..." << std::endl;
-}
+// void CipherGeometricPlanner::updateDecomposition() {
+//     DOUT << "Updating decomposition..." << std::endl;
+// }
 
-void CipherGeometricPlanner::expandSubproblem() {
-    DOUT << "Expanding subproblem..." << std::endl;
-}
+// void CipherGeometricPlanner::expandSubproblem() {
+//     DOUT << "Expanding subproblem..." << std::endl;
+// }
 
 GeometricPlanningResult CipherGeometricPlanner::useCompositePlanner(
     const std::vector<size_t>& robot_indices,
@@ -920,39 +920,6 @@ bool CipherGeometricPlanner::resolveWithHierarchicalExpansionRefinement(
         if (isTimeoutExceeded()) {
             std::cerr << "    Timeout during hierarchical expansion at layer " << expansion_layer << std::endl;
             return false;
-        }
-
-        // Reset cells refined in previous expansion layers before considering the wider region set.
-        // Refinement from a failed layer should not persist into the next expansion attempt.
-        if (expansion_layer > min_expansion_layer) {
-            auto grid_decomp = std::static_pointer_cast<GridDecompositionImpl>(decomp_);
-
-            // Collect decomposed parent cells from previous expansion layers, deepest first.
-            std::vector<std::pair<int,int>> to_reset; // (depth, rid)
-            for (auto& [rid, level_pair] : region_refinement_level_) {
-                if (level_pair.first < expansion_layer && grid_decomp->hasDecomposed(rid)) {
-                    to_reset.push_back({grid_decomp->getDecompositionDepth(rid), rid});
-                }
-            }
-            std::sort(to_reset.begin(), to_reset.end(), [](const auto& a, const auto& b) {
-                return a.first > b.first;
-            });
-
-            for (auto& [depth, r] : to_reset) {
-                if (grid_decomp->hasDecomposed(r)) {
-                    for (int child : grid_decomp->getChildRegions(r)) {
-                        region_viz_id_.erase(child);
-                        region_refinement_level_.erase(child);
-                    }
-                }
-                decomp_->resetCell(r);
-                region_refinement_level_.erase(r);
-            }
-
-            if (!to_reset.empty()) {
-                DOUT << "    Reset " << to_reset.size()
-                          << " refined cell(s) from previous expansion layers" << std::endl;
-            }
         }
 
         // Get expanded region for this layer
@@ -1239,37 +1206,6 @@ bool CipherGeometricPlanner::refineExpandedRegion(
             }
         }
     }
-    // for (const auto* state : replan_starts) {
-    //     start_regions.push_back(decomp_->locateSubRegion(state));
-    //     if (start_regions.back() < 0) {
-    //         states_in_bounds = false;
-    //         DOUT << "        Entry state outside local decomposition bounds" << std::endl;
-    //         DOUT << "Local Decomp Bounds: ";
-    //         for (size_t n =0; n < decomp_->getBounds().low.size(); ++n) {
-    //             DOUT << "[" << decomp_->getBounds().low[n] << ":" << decomp_->getBounds().high[n] << "]";
-    //         }
-    //         DOUT << " " << std::endl;
-            
-    //         robots_[0]->getSpaceInformation()->getStateSpace()->printState(state, DOUT);
-    //         break;
-    //     }
-    // }
-    // if (states_in_bounds) {
-    //     for (const auto* state : replan_goals) {
-    //         goal_regions.push_back(decomp_->locateSubRegion(state));
-    //         if (goal_regions.back() < 0) {
-    //             states_in_bounds = false;
-    //             DOUT << "        Exit state outside local decomposition bounds" << std::endl;
-    //             DOUT << "Local Decomp Bounds: ";
-    //             for (size_t n =0; n < decomp_->getBounds().low.size(); ++n) {
-    //                 DOUT << "[" << decomp_->getBounds().low[n] << ":" << decomp_->getBounds().high[n] << "]";
-    //             }
-    //             DOUT << " " <<std::endl;
-    //             robots_[0]->getSpaceInformation()->getStateSpace()->printState(state, DOUT);
-    //             break;
-    //         }
-    //     }
-    // }
 
     for (size_t i = 0; i < start_regions.size() || i < goal_regions.size(); ++i) {
         if (i < start_regions.size()) DOUT << "Start[" << i << "]: " << start_regions[i] << "  ";
@@ -1447,7 +1383,6 @@ bool CipherGeometricPlanner::refineExpandedRegion(
                 std::vector<size_t> single_robot = {replan_robot_indices[i]};
                 std::vector<GuidedPlanningResult> single_result = {replan_results[i]};
                 PathUpdateInfo& update_info = (replan_to_collision_idx[i] == 0) ? update_info_1 : update_info_2;
-                ///TODO: paths are not in correct regions... Also the paths are not from real start and goal
                 integrateRefinedPaths(single_robot, single_result, update_info, update_info);
             }
         }
@@ -1551,83 +1486,83 @@ void CipherGeometricPlanner::freeUpdateInfoStates(
 }
 
 // Private helpers for all conflict strategies
-std::shared_ptr<DecompositionImpl> CipherGeometricPlanner::createLocalDecomposition(
-    int parent_region,
-    double subdivision_factor) {
-    DOUT << "Creating local decomposition..." << std::endl;
-    const auto parent_bounds = decomp_->getCellBounds(parent_region);
-    int sf = static_cast<int>(subdivision_factor);
-    int dim = decomp_->getDimension();
+// std::shared_ptr<DecompositionImpl> CipherGeometricPlanner::createLocalDecomposition(
+//     int parent_region,
+//     double subdivision_factor) {
+//     DOUT << "Creating local decomposition..." << std::endl;
+//     const auto parent_bounds = decomp_->getCellBounds(parent_region);
+//     int sf = static_cast<int>(subdivision_factor);
+//     int dim = decomp_->getDimension();
 
-    ob::RealVectorBounds local_bounds(dim);
-    for (int i = 0; i < dim; ++i) {
-        local_bounds.setLow(i, parent_bounds.low[i]);
-        local_bounds.setHigh(i, parent_bounds.high[i]);
-    }
+//     ob::RealVectorBounds local_bounds(dim);
+//     for (int i = 0; i < dim; ++i) {
+//         local_bounds.setLow(i, parent_bounds.low[i]);
+//         local_bounds.setHigh(i, parent_bounds.high[i]);
+//     }
 
-    DOUT << "    Creating local decomposition: " << sf << "x" << sf << " grid" << std::endl;
+//     DOUT << "    Creating local decomposition: " << sf << "x" << sf << " grid" << std::endl;
 
-    // Single original cell: sf sub-cells per dimension (square cell → square sub-cells)
-    auto space = robots_[0]->getSpaceInformation()->getStateSpace();
-    auto decomp_ = std::make_shared<RectGridDecompositionImpl>(
-        std::vector<int>(dim, sf), local_bounds, space);
+//     // Single original cell: sf sub-cells per dimension (square cell → square sub-cells)
+//     auto space = robots_[0]->getSpaceInformation()->getStateSpace();
+//     auto decomp_ = std::make_shared<RectGridDecompositionImpl>(
+//         std::vector<int>(dim, sf), local_bounds, space);
 
-    recordRefinement(parent_region, decomp_);
-    return decomp_;
-}
+//     // recordRefinement(parent_region, decomp_);
+//     return decomp_;
+// }
 
-std::shared_ptr<DecompositionImpl> CipherGeometricPlanner::createMultiCellDecomposition(
-    const std::vector<int>& regions,
-    double subdivision_factor) {
-    DOUT << "Creating multi-cell decomposition..." << std::endl;
-    int sf = static_cast<int>(subdivision_factor);
-    int dim = decomp_->getDimension();
+// std::shared_ptr<DecompositionImpl> CipherGeometricPlanner::createMultiCellDecomposition(
+//     const std::vector<int>& regions,
+//     double subdivision_factor) {
+//     DOUT << "Creating multi-cell decomposition..." << std::endl;
+//     int sf = static_cast<int>(subdivision_factor);
+//     int dim = decomp_->getDimension();
 
-    // Get the original cell size (all cells are square with the same size)
-    const auto first_bounds = decomp_->getCellBounds(regions[0]);
-    double cell_size = first_bounds.high[0] - first_bounds.low[0];
+//     // Get the original cell size (all cells are square with the same size)
+//     const auto first_bounds = decomp_->getCellBounds(regions[0]);
+//     double cell_size = first_bounds.high[0] - first_bounds.low[0];
 
-    // Compute the bounding box of all original cells in the expanded region
-    std::vector<double> env_min, env_max;
-    computeExpandedBounds(regions, env_min, env_max);
+//     // Compute the bounding box of all original cells in the expanded region
+//     std::vector<double> env_min, env_max;
+//     computeExpandedBounds(regions, env_min, env_max);
 
-    ob::RealVectorBounds expanded_bounds(dim);
-    for (int i = 0; i < dim; ++i) {
-        expanded_bounds.setLow(i, env_min[i]);
-        expanded_bounds.setHigh(i, env_max[i]);
-    }
+//     ob::RealVectorBounds expanded_bounds(dim);
+//     for (int i = 0; i < dim; ++i) {
+//         expanded_bounds.setLow(i, env_min[i]);
+//         expanded_bounds.setHigh(i, env_max[i]);
+//     }
 
-    // For each original cell, the refinement produces sf sub-cells per dimension.
-    // Compute the total sub-cell count per dimension from the number of original
-    // cells along each axis (n_i * sf). This correctly handles non-square expanded
-    // regions (e.g., 3×2 original cells at grid boundaries).
-    std::vector<int> grid_lengths(dim);
-    for (int i = 0; i < dim; ++i) {
-        int n_i = static_cast<int>(std::round((env_max[i] - env_min[i]) / cell_size));
-        grid_lengths[i] = n_i * sf;
-    }
+//     // For each original cell, the refinement produces sf sub-cells per dimension.
+//     // Compute the total sub-cell count per dimension from the number of original
+//     // cells along each axis (n_i * sf). This correctly handles non-square expanded
+//     // regions (e.g., 3×2 original cells at grid boundaries).
+//     std::vector<int> grid_lengths(dim);
+//     for (int i = 0; i < dim; ++i) {
+//         int n_i = static_cast<int>(std::round((env_max[i] - env_min[i]) / cell_size));
+//         grid_lengths[i] = n_i * sf;
+//     }
 
-    DOUT << "      Multi-cell decomposition: " << grid_lengths[0] << "x" << grid_lengths[1]
-              << " grid (" << (grid_lengths[0] * grid_lengths[1]) << " regions)" << std::endl;
+//     DOUT << "      Multi-cell decomposition: " << grid_lengths[0] << "x" << grid_lengths[1]
+//               << " grid (" << (grid_lengths[0] * grid_lengths[1]) << " regions)" << std::endl;
 
-    auto space = robots_[0]->getSpaceInformation()->getStateSpace();
-    auto multi_cell_decomp = std::make_shared<RectGridDecompositionImpl>(
-        grid_lengths, expanded_bounds, space);
+//     auto space = robots_[0]->getSpaceInformation()->getStateSpace();
+//     auto multi_cell_decomp = std::make_shared<RectGridDecompositionImpl>(
+//         grid_lengths, expanded_bounds, space);
 
-    for (int region : regions)
-        recordRefinement(region, multi_cell_decomp);
+//     for (int region : regions)
+//         recordRefinement(region, multi_cell_decomp);
 
-    return multi_cell_decomp;
-}
+//     return multi_cell_decomp;
+// }
 
-bool CipherGeometricPlanner::extractReplanningBounds(
-    const SegmentConflict& conflict,
-    int conflict_region,
-    PathUpdateInfo& update_info_1,
-    PathUpdateInfo& update_info_2) {
-    DOUT << "Extracting replanning bounds..." << std::endl;
-    return false;
-}
+// bool CipherGeometricPlanner::extractReplanningBounds(
+//     const SegmentConflict& conflict,
+//     int conflict_region,
+//     PathUpdateInfo& update_info_1,
+//     PathUpdateInfo& update_info_2) {
+//     DOUT << "Extracting replanning bounds..." << std::endl;
+//     return false;
+// }
 
 bool CipherGeometricPlanner::extractReplanningBoundsForExpandedRegion(
     const SegmentConflict& conflict,
@@ -1962,144 +1897,144 @@ void CipherGeometricPlanner::computeExpandedBounds(
 }
 
 // Private helpers for composite planner strategy
-bool CipherGeometricPlanner::extractIndividualPaths(
-    const std::shared_ptr<og::PathGeometric>& compound_path,
-    std::vector<std::shared_ptr<og::PathGeometric>>& individual_paths) {
-    DOUT << "Extracting individual paths from compound path..." << std::endl;
-    return false;
-}
+// bool CipherGeometricPlanner::extractIndividualPaths(
+//     const std::shared_ptr<og::PathGeometric>& compound_path,
+//     std::vector<std::shared_ptr<og::PathGeometric>>& individual_paths) {
+//     DOUT << "Extracting individual paths from compound path..." << std::endl;
+//     return false;
+// }
 
-// Private helpers for decomposition hierarchy tracking
-void CipherGeometricPlanner::initializeDecompositionHierarchy() {
-    DOUT << "Initializing decomposition hierarchy..." << std::endl;
-}
+// // Private helpers for decomposition hierarchy tracking
+// void CipherGeometricPlanner::initializeDecompositionHierarchy() {
+//     DOUT << "Initializing decomposition hierarchy..." << std::endl;
+// }
 
-DecompositionCell* CipherGeometricPlanner::findCellByRegion(int region_id) {
-    DOUT << "Finding cell by region ID..." << std::endl;
-    return nullptr;
-}
+// DecompositionCell* CipherGeometricPlanner::findCellByRegion(int region_id) {
+//     DOUT << "Finding cell by region ID..." << std::endl;
+//     return nullptr;
+// }
 
-DecompositionCell* CipherGeometricPlanner::findCellByRegionRecursive(DecompositionCell& cell, int region_id) {
-    DOUT << "Finding cell by region ID recursively..." << std::endl;
-    return nullptr;
-}
+// DecompositionCell* CipherGeometricPlanner::findCellByRegionRecursive(DecompositionCell& cell, int region_id) {
+//     DOUT << "Finding cell by region ID recursively..." << std::endl;
+//     return nullptr;
+// }
 
-void CipherGeometricPlanner::recordRefinement(int parent_region, const std::shared_ptr<DecompositionImpl> decomp_) {
-    DOUT << "Recording refinement in decomposition hierarchy..." << std::endl;
-}
+// void CipherGeometricPlanner::recordRefinement(int parent_region, const std::shared_ptr<DecompositionImpl> decomp_) {
+//     DOUT << "Recording refinement in decomposition hierarchy..." << std::endl;
+// }
 
-bool CipherGeometricPlanner::resolveWithLocalCompositePlanner(
-    const SegmentConflict& conflict,
-    ConflictResolutionEntry& log_entry) {
-    DOUT << "Resolving with local composite planner..." << std::endl;
+// bool CipherGeometricPlanner::resolveWithLocalCompositePlanner(
+//     const SegmentConflict& conflict,
+//     ConflictResolutionEntry& log_entry) {
+//     DOUT << "Resolving with local composite planner..." << std::endl;
 
-    size_t robot_1 = conflict.robot_index_1;
-    size_t robot_2 = conflict.robot_index_2;
+//     size_t robot_1 = conflict.robot_index_1;
+//     size_t robot_2 = conflict.robot_index_2;
 
-    DOUT << "    Local composite planner: jointly planning robots "
-              << robot_1 << " and " << robot_2 << std::endl;
+//     DOUT << "    Local composite planner: jointly planning robots "
+//               << robot_1 << " and " << robot_2 << std::endl;
 
-    // Check for timeout
-    if (isTimeoutExceeded()) {
-        std::cerr << "    Timeout before local composite planner" << std::endl;
-        return false;
-    }
+//     // Check for timeout
+//     if (isTimeoutExceeded()) {
+//         std::cerr << "    Timeout before local composite planner" << std::endl;
+//         return false;
+//     }
 
-    StrategyAttempt attempt;
-    attempt.strategy = "local_composite";
+//     StrategyAttempt attempt;
+//     attempt.strategy = "local_composite";
 
-    // Locate conflict region and get expanded region for the subproblem
-    // Handle robots that have finished their paths (stationary at goal)
-    ob::State* s1_at_ts = getStateAtTimestep(robot_1, conflict.timestep);
-    if (!s1_at_ts) {
-        DOUT << "    Robot " << robot_1 << " has no path at conflict timestep" << std::endl;
-        attempt.planning_succeeded = false;
-        log_entry.attempts.push_back(attempt);
-        return false;
-    }
-    int conflict_region = decomp_->locateRegion(s1_at_ts);
+//     // Locate conflict region and get expanded region for the subproblem
+//     // Handle robots that have finished their paths (stationary at goal)
+//     ob::State* s1_at_ts = getStateAtTimestep(robot_1, conflict.timestep);
+//     if (!s1_at_ts) {
+//         DOUT << "    Robot " << robot_1 << " has no path at conflict timestep" << std::endl;
+//         attempt.planning_succeeded = false;
+//         log_entry.attempts.push_back(attempt);
+//         return false;
+//     }
+//     int conflict_region = decomp_->locateRegion(s1_at_ts);
 
-    // Use 2 layers of expansion around the conflict region for local bounds
-    std::vector<int> expanded_regions = getExpandedRegion(conflict_region, 2);
+//     // Use 2 layers of expansion around the conflict region for local bounds
+//     std::vector<int> expanded_regions = getExpandedRegion(conflict_region, 2);
 
-    // Extract replanning bounds (entry/exit states) for both robots
-    PathUpdateInfo update_info_1, update_info_2;
-    if (!extractReplanningBoundsForExpandedRegion(
-            conflict, expanded_regions, update_info_1, update_info_2)) {
-        DOUT << "    Failed to extract replanning bounds" << std::endl;
-        attempt.planning_succeeded = false;
-        log_entry.attempts.push_back(attempt);
-        return false;
-    }
+//     // Extract replanning bounds (entry/exit states) for both robots
+//     PathUpdateInfo update_info_1, update_info_2;
+//     if (!extractReplanningBoundsForExpandedRegion(
+//             conflict, expanded_regions, update_info_1, update_info_2)) {
+//         DOUT << "    Failed to extract replanning bounds" << std::endl;
+//         attempt.planning_succeeded = false;
+//         log_entry.attempts.push_back(attempt);
+//         return false;
+//     }
 
-    // Convert OMPL entry/exit states to std::vector<double>
-    auto si_1 = robots_[robot_1]->getSpaceInformation();
-    auto si_2 = robots_[robot_2]->getSpaceInformation();
+//     // Convert OMPL entry/exit states to std::vector<double>
+//     auto si_1 = robots_[robot_1]->getSpaceInformation();
+//     auto si_2 = robots_[robot_2]->getSpaceInformation();
 
-    std::vector<double> start_1, goal_1, start_2, goal_2;
-    si_1->getStateSpace()->copyToReals(start_1, update_info_1.planning_entry_state);
-    si_1->getStateSpace()->copyToReals(goal_1, update_info_1.planning_exit_state);
-    si_2->getStateSpace()->copyToReals(start_2, update_info_2.planning_entry_state);
-    si_2->getStateSpace()->copyToReals(goal_2, update_info_2.planning_exit_state);
+//     std::vector<double> start_1, goal_1, start_2, goal_2;
+//     si_1->getStateSpace()->copyToReals(start_1, update_info_1.planning_entry_state);
+//     si_1->getStateSpace()->copyToReals(goal_1, update_info_1.planning_exit_state);
+//     si_2->getStateSpace()->copyToReals(start_2, update_info_2.planning_entry_state);
+//     si_2->getStateSpace()->copyToReals(goal_2, update_info_2.planning_exit_state);
 
-    // Compute local bounds from expanded region
-    std::vector<double> local_env_min, local_env_max;
-    computeExpandedBounds(expanded_regions, local_env_min, local_env_max);
+//     // Compute local bounds from expanded region
+//     std::vector<double> local_env_min, local_env_max;
+//     computeExpandedBounds(expanded_regions, local_env_min, local_env_max);
 
-    // Call useCompositePlanner to jointly plan both robots
-    std::vector<size_t> robot_indices = {robot_1, robot_2};
-    std::vector<std::vector<double>> subproblem_starts = {start_1, start_2};
-    std::vector<std::vector<double>> subproblem_goals = {goal_1, goal_2};
+//     // Call useCompositePlanner to jointly plan both robots
+//     std::vector<size_t> robot_indices = {robot_1, robot_2};
+//     std::vector<std::vector<double>> subproblem_starts = {start_1, start_2};
+//     std::vector<std::vector<double>> subproblem_goals = {goal_1, goal_2};
 
-    GeometricPlanningResult result;
-    {
-        result = useCompositePlanner(
-            robot_indices, subproblem_starts, subproblem_goals,
-            local_env_min, local_env_max);
-    }
+//     GeometricPlanningResult result;
+//     {
+//         result = useCompositePlanner(
+//             robot_indices, subproblem_starts, subproblem_goals,
+//             local_env_min, local_env_max);
+//     }
 
-    if (result.solved && result.individual_paths.size() == 2) {
-        attempt.planning_succeeded = true;
-        DOUT << "    Local composite planning succeeded" << std::endl;
+//     if (result.solved && result.individual_paths.size() == 2) {
+//         attempt.planning_succeeded = true;
+//         DOUT << "    Local composite planning succeeded" << std::endl;
 
-        // Convert PlanningResult individual paths to GuidedPlanningResult format
-        std::vector<GuidedPlanningResult> local_results;
-        for (size_t i = 0; i < robot_indices.size(); ++i) {
-            GuidedPlanningResult guided_result;
-            guided_result.success = true;
-            guided_result.planning_time = result.planning_time;
-            guided_result.robot_index = robot_indices[i];
-            guided_result.path = result.individual_paths[i];
-            local_results.push_back(guided_result);
-        }
+//         // Convert PlanningResult individual paths to GuidedPlanningResult format
+//         std::vector<GuidedPlanningResult> local_results;
+//         for (size_t i = 0; i < robot_indices.size(); ++i) {
+//             GuidedPlanningResult guided_result;
+//             guided_result.success = true;
+//             guided_result.planning_time = result.planning_time;
+//             guided_result.robot_index = robot_indices[i];
+//             guided_result.path = result.individual_paths[i];
+//             local_results.push_back(guided_result);
+//         }
 
-        // Integrate refined paths and re-check conflict
-        {
-            integrateRefinedPaths(robot_indices, local_results, update_info_1, update_info_2);
-        }
-        {
-            recheckConflictsFromTimestep(getRecheckStartTimestep(conflict, update_info_1, update_info_2));
-        }
+//         // Integrate refined paths and re-check conflict
+//         {
+//             integrateRefinedPaths(robot_indices, local_results, update_info_1, update_info_2);
+//         }
+//         {
+//             recheckConflictsFromTimestep(getRecheckStartTimestep(conflict, update_info_1, update_info_2));
+//         }
 
-        // Check if the conflict is resolved
-        if (!conflictPersistsForRobots(robot_1, robot_2, conflict.timestep)) {
-            DOUT << "    Local composite planner resolved the conflict" << std::endl;
-            attempt.conflict_resolved = true;
-            log_entry.attempts.push_back(attempt);
-            freeUpdateInfoStates(robot_1, robot_2, update_info_1, update_info_2);
-            return true;
-        }
+//         // Check if the conflict is resolved
+//         if (!conflictPersistsForRobots(robot_1, robot_2, conflict.timestep)) {
+//             DOUT << "    Local composite planner resolved the conflict" << std::endl;
+//             attempt.conflict_resolved = true;
+//             log_entry.attempts.push_back(attempt);
+//             freeUpdateInfoStates(robot_1, robot_2, update_info_1, update_info_2);
+//             return true;
+//         }
 
-        DOUT << "    Local composite planner: conflict persists after replanning" << std::endl;
-    } else {
-        attempt.planning_succeeded = false;
-        DOUT << "    Local composite planner failed to find solution" << std::endl;
-    }
+//         DOUT << "    Local composite planner: conflict persists after replanning" << std::endl;
+//     } else {
+//         attempt.planning_succeeded = false;
+//         DOUT << "    Local composite planner failed to find solution" << std::endl;
+//     }
 
-    log_entry.attempts.push_back(attempt);
-    freeUpdateInfoStates(robot_1, robot_2, update_info_1, update_info_2);
-    return false;
-}
+//     log_entry.attempts.push_back(attempt);
+//     freeUpdateInfoStates(robot_1, robot_2, update_info_1, update_info_2);
+//     return false;
+// }
 
 bool CipherGeometricPlanner::resolveWithFullProblemCompositePlanner(
     int max_attempts,

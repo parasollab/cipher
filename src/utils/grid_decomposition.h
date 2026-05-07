@@ -66,7 +66,10 @@ class GridDecompositionImpl : public ompl::control::GridDecomposition, public De
             vol *= (b.high[i] - b.low[i]);
         return vol;
     }
-    int locateRegion(const ompl::base::State* s) const override { return ompl::control::GridDecomposition::locateRegion(s); }
+    int locateRegion(const ompl::base::State* s) const override {
+        // state_space_->printState(s, std::cout);
+        return ompl::control::GridDecomposition::locateRegion(s); 
+    }
     void sampleFromRegion(int rid, ompl::RNG& rng, std::vector<double>& coord) const override {
         const auto& bounds = getBoundsForRegion(rid);
         coord.resize(dimension_);

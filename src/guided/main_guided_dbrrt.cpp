@@ -89,6 +89,13 @@ int main(int argc, char *argv[]) {
   options_dbrrt.print(std::cout);
   std::cout << "***" << std::endl;
 
+  options_trajopt.smooth_traj = false;
+  options_trajopt.region_bounds_weight = 0.0;
+  // options_trajopt.solver_id = int(dynoplan::SOLVER::mpc);
+  std::cout << "*** options_trajopt ***" << std::endl;
+  options_trajopt.print(std::cout);
+  std::cout << "***" << std::endl;
+
   std::vector<Motion> motions;
 
   std::shared_ptr<dynobench::Model_robot> robot = dynobench::robot_factory(
@@ -312,7 +319,7 @@ int main(int argc, char *argv[]) {
     return waypoints;
   };
 
-  if (do_viz && out_db.solved_raw) {
+  if (do_viz && out_db.solved_raw && !out_db.solved) {
     const auto& raw_traj = !out_db.trajs_raw.empty() ? out_db.trajs_raw[0] : traj;
     YAML::Node ev;
     ev["type"] = "raw_trajectory";

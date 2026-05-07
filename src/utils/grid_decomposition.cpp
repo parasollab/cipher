@@ -77,6 +77,7 @@ void RectGridDecompositionImpl::project(const ompl::base::State* s,
 int RectGridDecompositionImpl::locateRegion(const ompl::base::State* s) const
 {
     std::vector<double> coord;
+    // state_space_->printState(s, std::cout);
     project(s, coord);
     std::vector<int> idx(dim_);
     for (int i = 0; i < dim_; ++i) {
