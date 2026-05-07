@@ -8,3 +8,4 @@ max_obstacle_volume_percent: 0.8
 max_initial_extensions: 1000
 max_blocked_edge_retries: 5
 max_no_progress_iters: 20
+restrict_sampling_to_cell: false

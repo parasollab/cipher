@@ -396,7 +396,7 @@ void CipherGeometricPlanner::computeGuidedPaths() {
         
         // Compute per-robot XY circumradius (worst-case footprint for a rotating robot)
         float robot_inflation = 0.0f;
-        {
+        if (config_.restrict_sampling_to_cell) {
             auto robot = robots_[robot_idx];
             for (size_t part = 0; part < robot->numParts(); ++part) {
                 auto geom = robot->getCollisionGeometry(part);
@@ -1563,7 +1563,7 @@ bool CipherGeometricPlanner::refineExpandedRegion(
             ));
 
             float robot_inflation = 0.0f;
-            {
+            if (config_.restrict_sampling_to_cell) {
                 auto robot = robots_[robot_idx];
                 for (size_t part = 0; part < robot->numParts(); ++part) {
                     auto geom = robot->getCollisionGeometry(part);
@@ -2399,6 +2399,8 @@ int main(int argc, char** argv)
                 config.max_blocked_edge_retries = cfg["max_blocked_edge_retries"].as<int>();
             if (cfg["max_no_progress_iters"])
                 config.max_no_progress_iters = cfg["max_no_progress_iters"].as<int>();
+            if (cfg["restrict_sampling_to_cell"])
+                config.restrict_sampling_to_cell = cfg["restrict_sampling_to_cell"].as<bool>();
         } catch (const YAML::Exception& e) {
             std::cerr << "ERROR loading config file: " << e.what() << std::endl;
             return 1;

@@ -94,6 +94,10 @@ struct CipherGeometricConfig {
     double goal_threshold = 0.5;  // Distance threshold for goal satisfaction
     double robot_cell_size_ratio = 1.8;
 
+    // Sampling space: when true, inset cell bounds by robot circumradius so the robot body
+    // stays inside the cell; when false, sample from the full cell extents.
+    bool restrict_sampling_to_cell = true;
+
     // Guided planner extension-limit retry
     int max_initial_extensions   = 0;  // 0 = time-based only (current behaviour)
     int max_blocked_edge_retries = 0;  // 0 = no retries (current behaviour)
