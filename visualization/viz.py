@@ -730,7 +730,7 @@ class Visualizer:
     # ------------------------------------------------------------------
 
     def run(self):
-        n = len(self.events)
+        n = len(self.events) if self.events is not None else 0
         dim_str = '3D' if self.is_3d else '2D'
 
         handlers = {

@@ -22,6 +22,7 @@ struct EdgeProperty {
 using RegionGraph = boost::adjacency_list<boost::vecS, boost::vecS, boost::directedS,
                                           boost::no_property, EdgeProperty>;
 using Vertex = boost::graph_traits<RegionGraph>::vertex_descriptor;
+using ForbiddenEdgeSet = std::set<std::pair<int,int>>;
 
 // Vertex constraint: robot cannot be at region at given time
 struct VertexConstraint {
@@ -114,7 +115,8 @@ public:
         std::shared_ptr<DecompositionImpl> decomp,
         const std::vector<ompl::base::State*>& start_states,
         const std::vector<ompl::base::State*>& goal_states,
-        const std::set<int>& allowed_regions = {});
+        const std::set<int>& allowed_regions = {},
+        const ForbiddenEdgeSet& forbidden_edges = {});
 
     std::string getName() const { return "CBS"; }
 
@@ -126,7 +128,8 @@ private:
 
     // Graph construction
     RegionGraph buildRegionGraph(std::shared_ptr<DecompositionImpl> decomp,
-                                 const std::set<int>& allowed_regions = {});
+                                 const std::set<int>& allowed_regions = {},
+                                 const ForbiddenEdgeSet& forbidden_edges = {});
     std::set<int> computeInvalidRegions(std::shared_ptr<DecompositionImpl> decomp);
     void getNeighbors(const RegionGraph& graph, int region, std::vector<int>& neighbors);
 

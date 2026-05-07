@@ -29,6 +29,14 @@ public:
         decomp_path = path;
     }
 
+    void setMaxExtensions(int n)            { max_extensions_ = n; }
+    bool hitExtensionLimit() const          { return hit_extension_limit_; }
+    int  getStuckRegionIdx() const          { return stuck_region_idx_; }
+
+    void setMaxNoProgressIters(int n)       { max_no_progress_iters_ = n; }
+    bool hitNoProgressLimit() const         { return stuck_no_progress_; }
+    int  getNoProgressStuckRegionIdx() const{ return no_progress_stuck_region_idx_; }
+
     ob::PlannerStatus solve(const ob::PlannerTerminationCondition &ptc) override
     {
         std::cout << "[GuidedGeoRRT] solve() called" << std::endl;
@@ -59,6 +67,11 @@ public:
             return ob::PlannerStatus::INVALID_START;
         }
 
+        hit_extension_limit_         = false;
+        stuck_region_idx_            = -1;
+        stuck_no_progress_           = false;
+        no_progress_stuck_region_idx_ = -1;
+
         valid_regions.insert(decomp_path[0]);
 
         Motion *solution = nullptr;
@@ -69,17 +82,50 @@ public:
         ob::State *xstate = si_->allocState();
 
         int region_idx = 0;
-        int iteration = 0;
+        int iteration  = 0;
+
+        int iters_without_progress = 0;
+        int last_coverage          = 0;
+        int tracked_region_idx     = 0;
 
         while (!ptc)
         {
             ++iteration;
+            if (max_extensions_ > 0 && iteration > max_extensions_) {
+                std::cout << "[GuidedGeoRRT] hit extension limit=" << max_extensions_
+                          << " at region_idx=" << region_idx
+                          << " (region=" << decomp_path[region_idx] << ")" << std::endl;
+                hit_extension_limit_ = true;
+                stuck_region_idx_    = region_idx;
+                break;
+            }
+
+            // No-progress detection: count consecutive iterations with no coverage increase
+            if (region_idx != tracked_region_idx || coverage_map[region_idx] > last_coverage) {
+                iters_without_progress = 0;
+                last_coverage      = coverage_map[region_idx];
+                tracked_region_idx = region_idx;
+            } else {
+                ++iters_without_progress;
+            }
+            if (max_no_progress_iters_ > 0 &&
+                iters_without_progress >= max_no_progress_iters_ &&
+                region_idx > 0)
+            {
+                std::cout << "[GuidedGeoRRT] no coverage progress at region_idx=" << region_idx
+                          << " (region=" << decomp_path[region_idx] << ") after "
+                          << iters_without_progress << " iterations" << std::endl;
+                stuck_no_progress_            = true;
+                no_progress_stuck_region_idx_ = region_idx;
+                break;
+            }
+
             bool sample_goal = false;
-            // if (iteration % 500 == 1)
-            //     std::cout << "[GuidedGeoRRT] iteration=" << iteration
-            //               << " region_idx=" << region_idx
-            //               << " nn_size=" << nn_->size()
-            //               << " coverage=" << coverage_map[region_idx] << std::endl;
+            if (iteration % 500 == 1)
+                std::cout << "[GuidedGeoRRT] iteration=" << iteration
+                          << " region_idx=" << region_idx
+                          << " nn_size=" << nn_->size()
+                          << " coverage=" << coverage_map[region_idx] << std::endl;
 
             /* sample random state (with goal biasing) */
             // if ((goal_s != nullptr) && rng_.uniform01() < goalBias_ && goal_s->canSample())
@@ -102,9 +148,14 @@ public:
             // }
             if (coverage_map[region_idx] > min_coverage) {
                 if (region_idx < (int)decomp_path.size()-1) {
+                    std::cout << "[GuidedGeoRRT] region " << decomp_path[region_idx]
+                              << " covered, advancing to region_idx=" << region_idx + 1
+                              << " (region=" << decomp_path[region_idx + 1] << ")" << std::endl;
                     region_idx++;
                     valid_regions.insert(decomp_path[region_idx]);
                 } else {
+                    if (!sample_goal)
+                        std::cout << "[GuidedGeoRRT] all regions covered, biasing toward goal" << std::endl;
                     sample_goal = true;
                 }
             }
@@ -289,6 +340,14 @@ protected:
     std::unordered_map<int, int> coverage_map;
 
     int min_coverage = 2;
+
+    int  max_extensions_      = 0;
+    bool hit_extension_limit_ = false;
+    int  stuck_region_idx_    = -1;
+
+    int  max_no_progress_iters_       = 0;
+    bool stuck_no_progress_           = false;
+    int  no_progress_stuck_region_idx_ = -1;
 
 };
 

@@ -33,7 +33,8 @@ std::vector<std::vector<int>> CBS::solve(
     std::shared_ptr<DecompositionImpl> decomp,
     const std::vector<ompl::base::State*>& start_states,
     const std::vector<ompl::base::State*>& goal_states,
-    const std::set<int>& allowed_regions)
+    const std::set<int>& allowed_regions,
+    const ForbiddenEdgeSet& forbidden_edges)
 {
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -41,8 +42,8 @@ std::vector<std::vector<int>> CBS::solve(
     std::cout << "CBS: Starting solve for " << start_states.size() << " robots" << std::endl;
 #endif
 
-    // Build region graph (optionally restricted to allowed_regions)
-    RegionGraph graph = buildRegionGraph(decomp, allowed_regions);
+    // Build region graph (optionally restricted to allowed_regions / forbidden_edges)
+    RegionGraph graph = buildRegionGraph(decomp, allowed_regions, forbidden_edges);
 
     // Initialize root CT node
     CTNode root;
@@ -175,7 +176,8 @@ std::vector<std::vector<int>> CBS::solve(
 // ============================================================================
 
 RegionGraph CBS::buildRegionGraph(std::shared_ptr<DecompositionImpl> decomp,
-                                   const std::set<int>& allowed_regions)
+                                   const std::set<int>& allowed_regions,
+                                   const ForbiddenEdgeSet& forbidden_edges)
 {
     int total = decomp->getTotalNumRegions();
     RegionGraph graph(total);
@@ -194,6 +196,7 @@ RegionGraph CBS::buildRegionGraph(std::shared_ptr<DecompositionImpl> decomp,
             if (!decomp->isLeafRegion(neighbor)) continue;
             if (!allowed_regions.empty() && !allowed_regions.count(neighbor)) continue;
             if (invalid.count(neighbor)) continue;
+            if (!forbidden_edges.empty() && forbidden_edges.count({i, neighbor})) continue;
             EdgeProperty ep;
             ep.weight = 1.0;
             boost::add_edge(i, neighbor, ep, graph);
