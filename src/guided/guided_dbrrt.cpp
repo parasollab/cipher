@@ -1119,7 +1119,7 @@ void guided_dbrrt(const dynobench::Problem &problem,
 
   int region_idx = 0;
   std::unordered_map<int, int> coverage_map;
-  int min_coverage = 10;
+  int min_coverage = 5;
 
   while (!stop_search()) {
     bool sample_goal = false;
@@ -1433,7 +1433,7 @@ void guided_dbrrt(const dynobench::Problem &problem,
 
           if (decomposition && !decomp_path.empty()) {
             size_t n_sp = static_cast<size_t>(decomposition->getDimension());
-            options_trajopt_used.region_bounds_weight = 50.0;
+            // options_trajopt_used.region_bounds_weight = 50.0;
 
             for (int rid : decomp_path) {
               auto rb = decomposition->getCellBounds(rid);
@@ -1816,7 +1816,7 @@ void guided_idbrrt(const dynobench::Problem &problem,
 
   double delta_factor = .99;
   size_t it = 0;
-  const size_t max_iterations = 10;  // Limit iterations to prevent infinite loop
+  const size_t max_iterations = 50;
   const double min_delta = 0.01;     // Don't reduce delta below this threshold
 
   Stopwatch watch;
@@ -1878,7 +1878,7 @@ void guided_idbrrt(const dynobench::Problem &problem,
 
         if (decomposition && !decomp_path.empty()) {
           size_t n_sp = static_cast<size_t>(decomposition->getDimension());
-          options_trajopt_used.region_bounds_weight = 50.0;
+          // options_trajopt_used.region_bounds_weight = 50.0;
 
           for (int rid : decomp_path) {
             auto rb = decomposition->getCellBounds(rid);

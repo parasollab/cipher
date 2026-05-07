@@ -20,7 +20,7 @@ struct Options_dbrrt {
   double prob_expand_forward = 0.5;
   bool extract_primitives = false;
   bool add_to_search_tree = false;
-  bool do_optimization = false;
+  bool do_optimization = true;
   int seed = -1;
   double cost_jump = 1;
   double best_cost_prune_factor = .9;
@@ -32,14 +32,14 @@ struct Options_dbrrt {
   double goal_region = .3;
   double cost_bound = 200;
   double goal_bias = 0.0;
-  bool debug = true;
-  bool verbose = true; // print search progress and status messages
+  bool debug = false;
+  bool verbose = false; // print search progress and status messages
   bool new_invariance = true;
   double delta = .3;
-  int max_expands = 1000;
+  int max_expands = 10000;
   double timelimit = 10000; // in ms second
   bool use_nigh_nn = true;
-  size_t max_motions = 10000;
+  size_t max_motions = 1000;
   std::vector<Motion> *motions_ptr = nullptr; // pointer to loaded motions
   std::string motionsFile = "";
   bool cut_actions = false;

@@ -2,6 +2,7 @@
 #define GUIDED_GEOMETRIC_RRT_H
 
 #include <iostream>
+#include <unordered_set>
 #include <ompl/geometric/planners/rrt/RRT.h>
 #include <ompl/base/spaces/SE2StateSpace.h>
 #include <ompl/base/spaces/RealVectorStateSpace.h>
@@ -36,6 +37,8 @@ public:
     void setMaxNoProgressIters(int n)       { max_no_progress_iters_ = n; }
     bool hitNoProgressLimit() const         { return stuck_no_progress_; }
     int  getNoProgressStuckRegionIdx() const{ return no_progress_stuck_region_idx_; }
+
+    void setRobotInflation(double inflation) { robot_inflation_ = inflation; }
 
     ob::PlannerStatus solve(const ob::PlannerTerminationCondition &ptc) override
     {
@@ -160,14 +163,30 @@ public:
                 }
             }
 
+            // Periodic goal-bias diagnostics (placed after sample_goal is set)
+            if (sample_goal && iteration % 500 == 1) {
+                Motion *near = nn_->nearest(rmotion);
+                double dist;
+                goal->isSatisfied(near->state, &dist);
+                int nn_region = decomposition_->locateSubRegion(near->state);
+                std::cout << "[GuidedGeoRRT] goal-bias iter=" << iteration
+                          << " best_dist=" << approxdif
+                          << " nn_dist_to_goal=" << dist
+                          << " nn_region=" << nn_region
+                          << " (last region=" << decomp_path.back() << ")" << std::endl;
+            }
+
             if (sample_goal && (goal_s != nullptr) && rng_.uniform01() < goalBias_ && goal_s->canSample()) {
                 goal_s->sampleGoal(rstate);
             } else {
-                // Sample from the current region
+                // Sample from the current region (inset by robot radius so body stays inside)
                 // std::cout << "[GuidedGeoRRT] sampling from region " << decomp_path[region_idx]
                 //           << " (region_idx=" << region_idx << ")" << std::endl;
                 std::vector<double> coord(decomposition_->getDimension());
-                decomposition_->sampleFromRegion(decomp_path[region_idx], rng_, coord);
+                if (region_idx < (int)decomp_path.size() - 1)
+                    sampleFromRegionPathAware(decomp_path[region_idx], coord);
+                else
+                    decomposition_->sampleFromRegion(decomp_path[region_idx], rng_, coord);
                 // std::cout << "[GuidedGeoRRT] sampled coord:";
                 // for (double v : coord) std::cout << " " << v;
                 // std::cout << std::endl;
@@ -216,7 +235,8 @@ public:
                         si_->freeState(states[0]);
 
                     // std::cout << "[GuidedGeoRRT] intermediate states count=" << states.size() << std::endl;
-                    int skipped = 0;
+                    int skipped_center = 0, skipped_body = 0;
+                    int skipped_center_region = -1;
                     for (std::size_t i = 1; i < states.size(); ++i)
                     {
                         auto *motion = new Motion;
@@ -228,9 +248,17 @@ public:
                         if ((region_idx > 0 && new_region_idx != decomp_path[region_idx - 1]) && new_region_idx != decomp_path[region_idx]) {
                         // if (valid_regions.find(new_region_idx) == valid_regions.end()) {
                             // Remove state from tree and continue
+                            skipped_center_region = new_region_idx;
                             si_->freeState(motion->state);
                             delete motion;
-                            ++skipped;
+                            ++skipped_center;
+                            continue;
+                        }
+                        // Reject if robot body would extend into a non-path region
+                        if (region_idx > 0 && region_idx < (int)decomp_path.size() - 1 && !isStateBodyInPath(motion->state, new_region_idx, decomp_path)) {
+                            si_->freeState(motion->state);
+                            delete motion;
+                            ++skipped_body;
                             continue;
                         }
                         // else {
@@ -245,11 +273,17 @@ public:
 
                         nmotion = motion;
                     }
-                    if (skipped > 0)
-                        // skipped = 10;
-                        std::cout << "[GuidedGeoRRT] skipped " << skipped
-                                  << " intermediate states (wrong region)" << std::endl;
-                    else {
+                    if (skipped_center > 0)
+                        std::cout << "[GuidedGeoRRT] skipped " << skipped_center
+                                  << " states (center check): got region " << skipped_center_region
+                                  << ", expected " << decomp_path[region_idx]
+                                  << (region_idx > 0 ? " or " + std::to_string(decomp_path[region_idx-1]) : "")
+                                  << std::endl;
+                    if (skipped_body > 0)
+                        std::cout << "[GuidedGeoRRT] skipped " << skipped_body
+                                  << " states (body check) in region_idx=" << region_idx
+                                  << " (region=" << decomp_path[region_idx] << ")" << std::endl;
+                    if (skipped_center == 0 && skipped_body == 0) {
                         // coverage_map[region_idx] += 1;
                         int end_region_idx = decomposition_->locateSubRegion(extension.back()->state);
                         if (end_region_idx == decomp_path[region_idx]) {
@@ -348,6 +382,78 @@ protected:
     int  max_no_progress_iters_       = 0;
     bool stuck_no_progress_           = false;
     int  no_progress_stuck_region_idx_ = -1;
+
+    double robot_inflation_{0.0};
+
+    // Samples a position from rid, inset from boundaries facing non-path regions but
+    // leaving transition sides (shared with path neighbors) open at full extent.
+    void sampleFromRegionPathAware(int rid, std::vector<double>& coord) {
+        auto cb = decomposition_->getCellBounds(rid);
+        int dim = decomposition_->getDimension();
+        std::vector<double> lo(dim), hi(dim);
+        for (int d = 0; d < dim; ++d) { lo[d] = cb.low[d]; hi[d] = cb.high[d]; }
+
+        if (robot_inflation_ > 0.0) {
+            for (int d = 0; d < dim; ++d) { lo[d] += robot_inflation_; hi[d] -= robot_inflation_; }
+
+            std::unordered_set<int> path_set(decomp_path.begin(), decomp_path.end());
+            std::vector<int> neighbors;
+            decomposition_->getNeighbors(rid, neighbors);
+            for (int nbr : neighbors) {
+                if (!path_set.count(nbr)) continue;
+                auto nb = decomposition_->getCellBounds(nbr);
+                for (int d = 0; d < dim; ++d) {
+                    if (std::abs(cb.high[d] - nb.low[d]) < 1e-9) hi[d] = cb.high[d];
+                    else if (std::abs(nb.high[d] - cb.low[d]) < 1e-9) lo[d] = cb.low[d];
+                }
+            }
+            for (int d = 0; d < dim; ++d)
+                if (lo[d] > hi[d]) lo[d] = hi[d] = (cb.low[d] + cb.high[d]) * 0.5;
+        }
+
+        coord.resize(dim);
+        for (int d = 0; d < dim; ++d)
+            coord[d] = rng_.uniformReal(lo[d], hi[d]);
+    }
+
+    // Returns false if the robot body (inflated center) would extend into a region
+    // that is not part of decomp_path. Boundaries shared with path regions are allowed.
+    bool isStateBodyInPath(const ob::State* state, int current_region,
+                           const std::vector<int>& path) const {
+        if (robot_inflation_ <= 0.0) return true;
+        std::vector<double> coord;
+        decomposition_->project(state, coord);
+        auto cb = decomposition_->getCellBounds(current_region);
+        std::unordered_set<int> path_set(path.begin(), path.end());
+        std::vector<int> neighbors;
+        decomposition_->getNeighbors(current_region, neighbors);
+        int dim = decomposition_->getDimension();
+        for (int nbr : neighbors) {
+            if (path_set.count(nbr)) continue;
+            auto nb = decomposition_->getCellBounds(nbr);
+            for (int d = 0; d < dim; ++d) {
+                bool is_hi_face = std::abs(cb.high[d] - nb.low[d]) < 1e-9;
+                bool is_lo_face = std::abs(nb.high[d] - cb.low[d]) < 1e-9;
+                if (!is_hi_face && !is_lo_face) continue;
+                // Only apply the face inset when the state's position in perpendicular
+                // dimensions actually overlaps with this neighbor's extent. If not, the
+                // robot body cannot reach this neighbor regardless of the face distance.
+                bool perp_overlap = true;
+                for (int d2 = 0; d2 < dim; ++d2) {
+                    if (d2 == d) continue;
+                    if (coord[d2] < nb.low[d2] - robot_inflation_ ||
+                        coord[d2] > nb.high[d2] + robot_inflation_) {
+                        perp_overlap = false;
+                        break;
+                    }
+                }
+                if (!perp_overlap) continue;
+                if (is_hi_face && coord[d] > cb.high[d] - robot_inflation_) return false;
+                if (is_lo_face && coord[d] < cb.low[d] + robot_inflation_) return false;
+            }
+        }
+        return true;
+    }
 
 };
 

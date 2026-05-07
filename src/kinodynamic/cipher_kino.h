@@ -1,5 +1,5 @@
-#ifndef CIPHER_GEOMETRIC_H
-#define CIPHER_GEOMETRIC_H
+#ifndef CIPHER_KINO_H
+#define CIPHER_KINO_H
 
 #include <ompl/base/spaces/RealVectorStateSpace.h>
 #include <ompl/control/SpaceInformation.h>
@@ -15,14 +15,12 @@
 #include <yaml-cpp/yaml.h>
 
 #include "utils/decomposition.h"
-#include "src/geometric/coupled_rrt.h"
-#include "src/guided/guided_geometric_rrt.h"
-#include "src/mapf/cbs.h"
+#include "coupled_rrt.h"
+#include "../guided/guided_dbrrt.hpp"
 
 
 namespace ob = ompl::base;
 namespace oc = ompl::control;
-namespace og = ompl::geometric;
 
 // Goal condition that checks only the first two reals (x, y) of any state space.
 // This lets geometric planning ignore velocity/angle components of kinodynamic states.
@@ -85,7 +83,7 @@ struct ConflictResolutionConfig {
     bool recheck_from_prior_segment = false;      // If true, start conflict re-checking from prior segment start
 };
 
-struct CipherGeometricConfig {
+struct CipherKinoConfig {
     int decomposition_region_length = 5.0;
     std::vector<int> decomposition_resolution = {10, 10, 1};  // Grid cells in [x, y, z]
     double planning_time_limit = 30.0;
@@ -93,15 +91,6 @@ struct CipherGeometricConfig {
     int seed = -1;  // Random seed (-1 for random)
     double goal_threshold = 0.5;  // Distance threshold for goal satisfaction
     double robot_cell_size_ratio = 1.8;
-
-    // Sampling space: when true, inset cell bounds by robot circumradius so the robot body
-    // stays inside the cell; when false, sample from the full cell extents.
-    bool restrict_sampling_to_cell = true;
-
-    // Guided planner extension-limit retry
-    int max_initial_extensions   = 0;  // 0 = time-based only (current behaviour)
-    int max_blocked_edge_retries = 0;  // 0 = no retries (current behaviour)
-    int max_no_progress_iters    = 0;  // 0 = disabled; forbid entry edge when coverage stalls
 
     // Decomposition output directory (empty string disables saving)
     std::string decomposition_output_dir = "";
@@ -113,7 +102,16 @@ struct CipherGeometricConfig {
     std::string composite_planner_method = "coupled_rrt";
 
     // Guided planner configuration
-    std::string guided_planner_method = "guided_geometric_rrt";
+    std::string guided_planner_method = "guided_dbrrt";
+
+    // Dynobench/dynoplan configuration (required for guided_idbrrt)
+    std::string models_base_path = "./db-CBS/dynoplan/dynobench/models";  // path to dynobench model YAML files (e.g. /path/to/models)
+    std::string motions_file     = "./db-CBS/dynoplan/dynomotions/unicycle1_v0__ispso__2023_04_03__14_56_57.bin.im.bin.im.bin.small5000.msgpack";  // path to motion primitives file (.msgpack)
+
+    dynoplan::Options_dbrrt options_dbrrt;
+    dynoplan::Options_trajopt options_trajopt;
+
+    double region_bounds_weight = 50.0;
 
     // Conflict resolution configuration
     ConflictResolutionConfig conflict_resolution_config;
@@ -231,7 +229,7 @@ struct ResolutionStats {
 // Planning Result Structure
 // ============================================================================
 
-struct CipherGeometricResult {
+struct CipherKinoResult {
     bool success = false;
     double planning_time = 0.0;
     std::string failure_reason;    // Empty on success; e.g. "timeout_high_level_paths",
@@ -240,31 +238,31 @@ struct CipherGeometricResult {
     ResolutionStats resolution_stats;
 };
 
-struct GeometricPlanningResult {
-    bool solved;                               // Whether exact solution was found
-    double planning_time;                      // Time spent planning (seconds)
-    std::shared_ptr<og::PathGeometric> path;     // Solution path (compound path for all robots)
-    std::vector<std::shared_ptr<og::PathGeometric>> individual_paths;  // Individual paths per robot
-};
-
-struct GuidedPlanningResult {
+struct KinoGuidedPlanningResult {
     bool success;
     double planning_time;
-    std::shared_ptr<og::PathGeometric> path;
+    std::shared_ptr<oc::PathControl> path;
     size_t robot_index;
 };
 
+struct KinoPlanningResult {
+    bool solved;                               // Whether exact solution was found
+    double planning_time;                      // Time spent planning (seconds)
+    std::shared_ptr<oc::PathControl> path;     // Solution path (compound path for all robots)
+    std::vector<std::shared_ptr<oc::PathControl>> individual_paths;  // Individual paths per robot
+};
+
 // ============================================================================
-// CipherGeometricPlanner Class (Geometric Version)
+// CipherKinoPlanner Class (Kinodynamic Version)
 // ============================================================================
 
-class CipherGeometricPlanner {
+class CipherKinoPlanner {
 public:
     // Constructor
-    explicit CipherGeometricPlanner(const CipherGeometricConfig& config);
+    explicit CipherKinoPlanner(const CipherKinoConfig& config);
 
     // Destructor
-    ~CipherGeometricPlanner();
+    ~CipherKinoPlanner();
 
     // Load problem from data structures
     void loadProblem(
@@ -276,7 +274,7 @@ public:
         const std::vector<double>& env_max);
 
     // Main planning method - runs full SyCLoP pipeline
-    CipherGeometricResult plan();
+    CipherKinoResult plan();
 
     // Individual planning phases (can be called separately if needed)
     void computeHighLevelPaths();
@@ -287,14 +285,14 @@ public:
     // Accessors
     const std::vector<std::vector<int>>& getHighLevelPaths() const { return high_level_paths_; }
     const std::shared_ptr<DecompositionImpl> getDecomposition() const { return decomp_; }
-    const std::vector<GuidedPlanningResult>& getGuidedPaths() const { return guided_planning_results_; }
-    const std::vector<std::shared_ptr<og::PathGeometric>>& getRobotPaths() const { return robot_paths_; }
+    const std::vector<KinoGuidedPlanningResult>& getGuidedPaths() const { return guided_planning_results_; }
+    const std::vector<std::shared_ptr<oc::PathControl>>& getRobotPaths() const { return robot_paths_; }
     const std::vector<std::shared_ptr<Robot>>& getRobots() const { return robots_; }
     const std::vector<SegmentConflict>& getConflicts() const { return segment_conflicts_; }
 
 private:
     // Configuration
-    CipherGeometricConfig config_;
+    CipherKinoConfig config_;
 
     // Environment data
     std::vector<fcl::CollisionObjectf*> obstacles_;
@@ -314,8 +312,8 @@ private:
 
     // Planning state
     std::vector<std::vector<int>> high_level_paths_;
-    std::vector<GuidedPlanningResult> guided_planning_results_;
-    std::vector<std::shared_ptr<og::PathGeometric>> robot_paths_;  // Current path per robot
+    std::vector<KinoGuidedPlanningResult> guided_planning_results_;
+    std::vector<std::shared_ptr<oc::PathControl>> robot_paths_;  // Current path per robot
     std::vector<SegmentConflict> segment_conflicts_;     // Detected conflicts
     bool problem_loaded_ = false;
     ResolutionStats resolution_stats_;  // Track conflict resolution statistics
@@ -343,18 +341,15 @@ private:
     // Decompose() call so local_mapf events always emit IDs that viz.py recognises.
     std::unordered_map<int, std::string> region_viz_id_;
 
-    ForbiddenEdgeSet forbidden_edges_;  // Cell edges globally removed from CBS graph
-
     // Helper methods
     void setupDecomposition();
-    void separateStartCells();
     void setupCollisionManager();
     void setupRobots();
     void cleanup();
 
-    std::vector<fcl::CollisionObjectf*> getObstaclesInRegion(
-        const std::vector<double>& region_min,
-        const std::vector<double>& region_max) const;
+    // std::vector<fcl::CollisionObjectf*> getObstaclesInRegion(
+    //     const std::vector<double>& region_min,
+    //     const std::vector<double>& region_max) const;
 
     // Conflict checking helpers
     ob::State* getStateAtTimestep(size_t robot_idx, int timestep) const;
@@ -365,7 +360,7 @@ private:
     // Conflict resolution strategies
     // void updateDecomposition();
     // void expandSubproblem();
-    GeometricPlanningResult useCompositePlanner(
+    KinoPlanningResult useCompositePlanner(
         const std::vector<size_t>& robot_indices,
         const std::vector<std::vector<double>>& subproblem_starts,
         const std::vector<std::vector<double>>& subproblem_goals,
@@ -430,11 +425,11 @@ private:
     // std::shared_ptr<DecompositionImpl> createMultiCellDecomposition(
     //     const std::vector<int>& regions,
     //     double subdivision_factor);
-    bool extractReplanningBounds(
-        const SegmentConflict& conflict,
-        int conflict_region,
-        PathUpdateInfo& update_info_1,
-        PathUpdateInfo& update_info_2);
+    // bool extractReplanningBounds(
+    //     const SegmentConflict& conflict,
+    //     int conflict_region,
+    //     PathUpdateInfo& update_info_1,
+    //     PathUpdateInfo& update_info_2);
     // bool extractReplanningBoundsForExpandedRegion(
     //     const SegmentConflict& collision,
     //     const std::vector<int>& expanded_regions,
@@ -442,7 +437,7 @@ private:
     //     PathUpdateInfo& update_info_2);
     void integrateRefinedPaths(
         const std::vector<size_t>& robot_indices,
-        const std::vector<GuidedPlanningResult>& local_results,
+        const std::vector<KinoGuidedPlanningResult>& local_results,
         const PathUpdateInfo& update_info_1,
         const PathUpdateInfo& update_info_2);
     void recheckConflictsFromTimestep(int start_timestep);
@@ -459,8 +454,9 @@ private:
 
     // Composite planner helpers
     bool extractIndividualPaths(
-        const std::shared_ptr<og::PathGeometric>& compound_path,
-        std::vector<std::shared_ptr<og::PathGeometric>>& individual_paths);
+        const std::shared_ptr<oc::PathControl>& compound_path,
+        const std::vector<size_t>& robot_indices,
+        std::vector<std::shared_ptr<oc::PathControl>>& individual_paths);
 
     // Decomposition hierarchy tracking
     // void initializeDecompositionHierarchy();
@@ -484,7 +480,6 @@ private:
                            const std::vector<std::tuple<std::string,
                                                         std::vector<double>,
                                                         std::vector<double>>>& new_cells);
-    void vizEmitConflicts(const std::vector<SegmentConflict>& conflicts);
 
 public:
     void setVizFile(const std::string& path) { viz_file_ = path; do_viz_ = !path.empty(); }
