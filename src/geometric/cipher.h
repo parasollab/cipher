@@ -480,6 +480,7 @@ private:
                            const std::vector<std::tuple<std::string,
                                                         std::vector<double>,
                                                         std::vector<double>>>& new_cells);
+    void vizEmitConflicts(const std::vector<SegmentConflict>& conflicts);
 
 public:
     void setVizFile(const std::string& path) { viz_file_ = path; do_viz_ = !path.empty(); }

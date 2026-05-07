@@ -151,6 +151,40 @@ void CipherGeometricPlanner::vizEmitGridUpdate(
               << " removed, " << new_cells.size() << " added" << std::endl;
 }
 
+void CipherGeometricPlanner::vizEmitConflicts(const std::vector<SegmentConflict>& conflicts)
+{
+    if (!do_viz_ || conflicts.empty()) return;
+
+    // For each unique robot pair, record only the first (minimum) timestep.
+    std::map<std::pair<size_t,size_t>, int> pair_first_timestep;
+    for (const auto& c : conflicts) {
+        if (c.type != SegmentConflict::ROBOT_ROBOT) continue;
+        auto key = std::make_pair(
+            std::min(c.robot_index_1, c.robot_index_2),
+            std::max(c.robot_index_1, c.robot_index_2));
+        auto it = pair_first_timestep.find(key);
+        if (it == pair_first_timestep.end())
+            pair_first_timestep[key] = c.timestep;
+        else
+            it->second = std::min(it->second, c.timestep);
+    }
+
+    for (const auto& [pair, timestep] : pair_first_timestep) {
+        YAML::Node ev;
+        ev["type"] = "collision";
+        YAML::Node robots_node;
+        robots_node.push_back("r" + std::to_string(pair.first));
+        robots_node.push_back("r" + std::to_string(pair.second));
+        ev["robots"] = robots_node;
+        ev["time"] = timestep * 0.1;
+        viz_events_.push_back(ev);
+    }
+
+    vizWriteFile();
+    DOUT << "[viz] collision events: " << pair_first_timestep.size()
+              << " pair(s)" << std::endl;
+}
+
 CipherGeometricPlanner::CipherGeometricPlanner(const CipherGeometricConfig& config)
     : config_(config), decomp_(nullptr), workspace_bounds_(3) {
 }
@@ -519,6 +553,7 @@ bool CipherGeometricPlanner::checkPathsForConflicts() {
         }
     }
 
+    vizEmitConflicts(segment_conflicts_);
     return !segment_conflicts_.empty();
 }
 
@@ -606,6 +641,11 @@ void CipherGeometricPlanner::separateStartCells() {
     auto grid_decomp = std::dynamic_pointer_cast<GridDecompositionImpl>(decomp_);
     int max_levels = config_.conflict_resolution_config.max_refinement_levels;
 
+    // Tracks cells that were produced by a prior start-separation split.
+    // A cell in this set must not be decomposed again here — each original
+    // conflicting start cell is split at most once.
+    std::set<int> once_decomposed;
+
     while (true) {
         // Locate the finest-grained (leaf) cell for each robot's start state.
         std::vector<int> start_regions(start_states_.size());
@@ -634,11 +674,24 @@ void CipherGeometricPlanner::separateStartCells() {
             }
         }
 
+        // Filter out cells already produced by a prior split — each cell is
+        // only ever decomposed once for start separation.
+        std::vector<int> filtered;
+        for (int cell : to_decompose)
+            if (!once_decomposed.count(cell))
+                filtered.push_back(cell);
+
+        if (filtered.empty()) {
+            throw std::runtime_error(
+                "separateStartCells: cannot separate robots — start positions "
+                "are too close; cells already decomposed once");
+        }
+
         // Decompose each conflicting cell and update bookkeeping.
         std::vector<std::string> removed_viz_ids;
         std::vector<std::tuple<std::string, std::vector<double>, std::vector<double>>> new_cells;
 
-        for (int r : to_decompose) {
+        for (int r : filtered) {
             std::string parent_viz_id =
                 region_viz_id_.count(r) ? region_viz_id_[r] : "c" + std::to_string(r);
             removed_viz_ids.push_back(parent_viz_id);
@@ -647,6 +700,7 @@ void CipherGeometricPlanner::separateStartCells() {
 
             region_viz_id_.erase(r);
             for (int child : grid_decomp->getChildRegions(r)) {
+                once_decomposed.insert(child);
                 region_viz_id_[child] = parent_viz_id + "_" + std::to_string(child);
                 if (do_viz_) {
                     auto cb = decomp_->getCellBounds(child);
@@ -661,7 +715,7 @@ void CipherGeometricPlanner::separateStartCells() {
         if (do_viz_)
             vizEmitGridUpdate(removed_viz_ids, new_cells);
 
-        DOUT << "  Decomposed " << to_decompose.size()
+        DOUT << "  Decomposed " << filtered.size()
              << " start cell(s); re-checking..." << std::endl;
     }
 
@@ -1939,6 +1993,7 @@ void CipherGeometricPlanner::recheckConflictsFromTimestep(int start_timestep) {
                     coll.part_index_2 = part_j;
                     segment_conflicts_.push_back(coll);
                     DOUT << "    Found robot-robot conflict at timestep " << timestep << std::endl;
+                    vizEmitConflicts(segment_conflicts_);
                     return;
                 }
             }
