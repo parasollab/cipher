@@ -320,7 +320,8 @@ void CipherGeometricPlanner::computeHighLevelPaths() {
         for (int r = 0; r < (int)high_level_paths_.size(); ++r) {
             YAML::Node cell_ids;
             for (int rid : high_level_paths_[r])
-                cell_ids.push_back("c" + std::to_string(rid));
+                cell_ids.push_back(region_viz_id_.count(rid)
+                    ? region_viz_id_.at(rid) : "c" + std::to_string(rid));
             paths["r" + std::to_string(r)] = cell_ids;
         }
         ev["paths"] = paths;
