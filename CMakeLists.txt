@@ -252,6 +252,7 @@ target_link_libraries(test_cbs PRIVATE
   ompl
   Eigen3::Eigen
   Boost::unit_test_framework
+  ${FCL_LIBRARIES}
 )
 add_test(NAME CBSTests COMMAND test_cbs)
 
