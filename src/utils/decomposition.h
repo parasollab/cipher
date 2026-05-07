@@ -29,6 +29,16 @@ class DecompositionImpl {
     virtual void getNeighbors(int rid, std::vector<int>& neighbors) const = 0;
     virtual void getAllNeighbors(int rid, std::vector<int>& neighbors) const = 0;
     virtual void sampleFromRegion(int rid, ompl::RNG& rng, std::vector<double>& coord) const = 0;
+    virtual void sampleFromRegionInset(int rid, ompl::RNG& rng, std::vector<double>& coord, double inset) const {
+        auto cb = getCellBounds(rid);
+        coord.resize(getDimension());
+        for (int i = 0; i < getDimension(); ++i) {
+            double lo = cb.low[i] + inset;
+            double hi = cb.high[i] - inset;
+            if (lo >= hi) { lo = hi = (cb.low[i] + cb.high[i]) * 0.5; }
+            coord[i] = rng.uniformReal(lo, hi);
+        }
+    }
     virtual void sampleFullState(const ompl::base::StateSamplerPtr& sampler, const std::vector<double>& coord, ompl::base::State* s) const = 0;
     virtual ompl::base::RealVectorBounds getCellBounds(int rid) const = 0;
 

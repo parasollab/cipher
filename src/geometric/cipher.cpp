@@ -381,6 +381,8 @@ void CipherGeometricPlanner::computeGuidedPaths() {
     guided_planning_results_.clear();
 
     for (size_t robot_idx = 0; robot_idx < robots_.size(); ++robot_idx) {
+        std::cout << "Guided planning for robot " << robot_idx << "..." << std::endl;
+
         auto robot_si = robot_sis_[robot_idx];
 
         guided_planning_results_.push_back(GuidedPlanningResult());
@@ -392,11 +394,28 @@ void CipherGeometricPlanner::computeGuidedPaths() {
         pdef->setGoal(std::make_shared<PositionGoalCondition>(
             robot_si, goal_states_[robot_idx], config_.goal_threshold));
         
+        // Compute per-robot XY circumradius (worst-case footprint for a rotating robot)
+        float robot_inflation = 0.0f;
+        {
+            auto robot = robots_[robot_idx];
+            for (size_t part = 0; part < robot->numParts(); ++part) {
+                auto geom = robot->getCollisionGeometry(part);
+                if (geom) {
+                    geom->computeLocalAABB();
+                    const auto& aabb = geom->aabb_local;
+                    float hx = (aabb.max_[0] - aabb.min_[0]) / 2.0f;
+                    float hy = (aabb.max_[1] - aabb.min_[1]) / 2.0f;
+                    robot_inflation = std::max(robot_inflation, std::sqrt(hx * hx + hy * hy));
+                }
+            }
+        }
+
         // Create guided planner instance
         auto planner = std::make_shared<GuidedGeometricRRT>(robot_si);
         planner->setIntermediateStates(true);
         planner->setDecomposition(decomp_);
         planner->setDecompositionPath(high_level_paths_[robot_idx]);
+        planner->setRobotInflation(static_cast<double>(robot_inflation));
         if (config_.max_initial_extensions > 0)
             planner->setMaxExtensions(config_.max_initial_extensions);
         if (config_.max_no_progress_iters > 0)
@@ -404,9 +423,27 @@ void CipherGeometricPlanner::computeGuidedPaths() {
         planner->setProblemDefinition(pdef);
         planner->setup();
 
+        {
+            const auto& path = high_level_paths_[robot_idx];
+            int last_region = path.back();
+            auto last_bounds = decomp_->getCellBounds(last_region);
+            int goal_region = decomp_->locateSubRegion(goal_states_[robot_idx]);
+            std::vector<double> goal_reals;
+            robot_si->getStateSpace()->copyToReals(goal_reals, goal_states_[robot_idx]);
+            bool goal_in_last = (goal_reals[0] >= last_bounds.low[0] && goal_reals[0] < last_bounds.high[0] &&
+                                 goal_reals[1] >= last_bounds.low[1] && goal_reals[1] < last_bounds.high[1]);
+            std::cout << "[cipher] robot " << robot_idx
+                      << " goal=(" << goal_reals[0] << "," << goal_reals[1] << ")"
+                      << " locateSubRegion(goal)=" << goal_region
+                      << " path.back()=" << last_region
+                      << " last_bounds=[" << last_bounds.low[0] << "," << last_bounds.high[0]
+                      << "]x[" << last_bounds.low[1] << "," << last_bounds.high[1] << "]"
+                      << " goal_in_last=" << goal_in_last << std::endl;
+        }
+
         ob::PlannerStatus status = planner->solve(
             ob::timedPlannerTerminationCondition(config_.planning_time_limit));
-        
+
         std::cout << "  Robot " << robot_idx << ": guided planner status: " << status << std::endl;
         std::cout << "  Robot " << robot_idx << ": extensions: " << planner->hitExtensionLimit() << std::endl;
 
@@ -1440,7 +1477,22 @@ bool CipherGeometricPlanner::refineExpandedRegion(
         DOUT << "        MAPF failed" << std::endl;
         freeUpdateInfoStates(robot_1, robot_2, update_info_1, update_info_2);
         return false;
-    } else {
+    }
+
+    // CBS routed to locateSubRegion(region_exit_state), but the low-level planner
+    // goal (planning_exit_state) may be one region further (just past the conflict
+    // boundary). Extend each path by that region when they differ so the planner
+    // is allowed to reach the actual goal.
+    for (size_t i = 0; i < local_high_level_paths.size(); ++i) {
+        int goal_region = decomp_->locateSubRegion(replan_goals[i]);
+        if (goal_region >= 0 && !local_high_level_paths[i].empty() &&
+            local_high_level_paths[i].back() != goal_region) {
+            local_high_level_paths[i].push_back(goal_region);
+            DOUT << "        Extended path for robot " << i << " by goal region " << goal_region << std::endl;
+        }
+    }
+
+    {
         DOUT << "        MAPF succeeded, got high-level paths for " << local_high_level_paths.size() << " robot(s)" << std::endl;
 
         // Debug print the high-level paths
@@ -1493,6 +1545,11 @@ bool CipherGeometricPlanner::refineExpandedRegion(
         for (size_t i = 0; i < replan_robot_indices.size(); ++i) {
             size_t robot_idx = replan_robot_indices[i];
 
+            std::cout << "Guided planning for robot " << robot_idx << " with start state ";
+            robots_[robot_idx]->getSpaceInformation()->getStateSpace()->printState(replan_starts[i], std::cout);
+            std::cout << " and goal state ";            robots_[robot_idx]->getSpaceInformation()->getStateSpace()->printState(replan_goals[i], std::cout);
+            std::cout << std::endl;
+
             /// TODO: How to update problem def so that we can set new bounds
             auto robot_si = robot_sis_[robot_idx];
 
@@ -1505,12 +1562,46 @@ bool CipherGeometricPlanner::refineExpandedRegion(
                 robot_si, replan_goals[i], config_.goal_threshold
             ));
 
+            float robot_inflation = 0.0f;
+            {
+                auto robot = robots_[robot_idx];
+                for (size_t part = 0; part < robot->numParts(); ++part) {
+                    auto geom = robot->getCollisionGeometry(part);
+                    if (geom) {
+                        geom->computeLocalAABB();
+                        const auto& aabb = geom->aabb_local;
+                        float hx = (aabb.max_[0] - aabb.min_[0]) / 2.0f;
+                        float hy = (aabb.max_[1] - aabb.min_[1]) / 2.0f;
+                        robot_inflation = std::max(robot_inflation, std::sqrt(hx * hx + hy * hy));
+                    }
+                }
+            }
+
             auto planner = std::make_shared<GuidedGeometricRRT>(robot_si);
             planner->setIntermediateStates(true);
             planner->setDecomposition(decomp_);
             planner->setDecompositionPath(local_high_level_paths[i]);
+            planner->setRobotInflation(static_cast<double>(robot_inflation));
             planner->setProblemDefinition(pdef);
             planner->setup();
+
+            {
+                const auto& lpath = local_high_level_paths[i];
+                int last_region = lpath.back();
+                auto last_bounds = decomp_->getCellBounds(last_region);
+                int goal_region = decomp_->locateSubRegion(replan_goals[i]);
+                std::vector<double> goal_reals;
+                robot_si->getStateSpace()->copyToReals(goal_reals, replan_goals[i]);
+                bool goal_in_last = (goal_reals[0] >= last_bounds.low[0] && goal_reals[0] < last_bounds.high[0] &&
+                                     goal_reals[1] >= last_bounds.low[1] && goal_reals[1] < last_bounds.high[1]);
+                std::cout << "[cipher] replan robot " << robot_idx
+                          << " goal=(" << goal_reals[0] << "," << goal_reals[1] << ")"
+                          << " locateSubRegion(goal)=" << goal_region
+                          << " path.back()=" << last_region
+                          << " last_bounds=[" << last_bounds.low[0] << "," << last_bounds.high[0]
+                          << "]x[" << last_bounds.low[1] << "," << last_bounds.high[1] << "]"
+                          << " goal_in_last=" << goal_in_last << std::endl;
+            }
 
             // ob::PlannerStatus status;
             ob::PlannerStatus status = planner->solve(
