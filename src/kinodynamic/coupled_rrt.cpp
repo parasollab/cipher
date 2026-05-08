@@ -332,14 +332,10 @@ int main(int argc, char** argv)
         for (size_t s = 0; s < path->getStateCount(); ++s) {
             const auto* compound = path->getState(s)->as<ob::CompoundState>();
             for (int r = 0; r < num_robots; ++r) {
-                const auto* cs = compound->components[r]->as<ob::CompoundStateSpace::StateType>();
-                const auto* pos = cs->as<ob::RealVectorStateSpace::StateType>(0);
-                const auto* vel = cs->as<ob::RealVectorStateSpace::StateType>(1);
+                std::vector<double> reals;
+                robot_spaces[r]->copyToReals(reals, compound->components[r]);
                 YAML::Node state_node;
-                state_node.push_back(pos->values[0]);
-                state_node.push_back(pos->values[1]);
-                state_node.push_back(vel->values[0]);
-                state_node.push_back(vel->values[1]);
+                for (double v : reals) state_node.push_back(v);
                 robot_states[r].push_back(state_node);
             }
         }

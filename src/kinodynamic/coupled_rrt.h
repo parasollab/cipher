@@ -1,7 +1,7 @@
 #ifndef KINO_COUPLED_RRT_H
 #define KINO_COUPLED_RRT_H
 
-#include <ompl/base/goals/GoalRegion.h>
+#include <ompl/base/goals/GoalSampleableRegion.h>
 #include <ompl/base/spaces/SE2StateSpace.h>
 #include <ompl/base/spaces/RealVectorStateSpace.h>
 #include <ompl/base/StateSpace.h>
@@ -115,14 +115,14 @@ private:
 };
 
 
-class CompoundGoalCondition : public ob::GoalRegion
+class CompoundGoalCondition : public ob::GoalSampleableRegion
 {
 public:
     CompoundGoalCondition(
         const ob::SpaceInformationPtr& si,
         const std::vector<ob::State*>& goal_states,
         double threshold)
-        : ob::GoalRegion(si), goal_states_(goal_states)
+        : ob::GoalSampleableRegion(si), goal_states_(goal_states)
     {
         threshold_ = threshold;
     }
@@ -139,6 +139,17 @@ public:
         }
         return max_dist;
     }
+
+    void sampleGoal(ob::State* st) const override
+    {
+        auto* compound = st->as<ob::CompoundState>();
+        auto css = si_->getStateSpace()->as<ob::CompoundStateSpace>();
+        for (size_t i = 0; i < goal_states_.size(); ++i) {
+            css->getSubspace(i)->copyState(compound->components[i], goal_states_[i]);
+        }
+    }
+
+    unsigned int maxSampleCount() const override { return 1; }
 
 private:
     std::vector<ob::State*> goal_states_;

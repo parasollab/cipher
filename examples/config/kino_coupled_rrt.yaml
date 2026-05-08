@@ -1,5 +1,8 @@
 # Configuration file for coupled_rrt planner
 
 goal_threshold: 1.0 # Distance threshold to consider goal reached
-goal_bias: 0.1 # Probability of sampling the goal during RRT expansion
+goal_bias: 0.2 # Probability of sampling the goal during RRT expansion
 timelimit: 600.0
+control_duration_min: 10 # minimum duration of a control input
+control_duration_max: 100 # maximum duration of a control input
+propagation_step_size: 0.1 # time step for propagating the system dynamics
