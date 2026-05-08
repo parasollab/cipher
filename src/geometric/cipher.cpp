@@ -253,7 +253,25 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
         while (true) {
             DOUT << "[Phase 1] Computing high-level paths (attempt "
                  << blocked_edge_attempts + 1 << ")..." << std::endl;
-            computeHighLevelPaths();
+
+            bool cbs_ok = false;
+            try {
+                computeHighLevelPaths();
+                cbs_ok = true;
+            } catch (const std::exception& e) {
+                if (blocked_edge_attempts == 0) {
+                    std::cerr << "[Phase 1] CBS failed (" << e.what()
+                              << "); decomposing all leaf cells one level and retrying" << std::endl;
+                    if (!decomposeAllLeavesOneLevel()) {
+                        std::cerr << "[Phase 1] All cells at maximum decomposition depth; giving up" << std::endl;
+                        throw;
+                    }
+                } else {
+                    throw;
+                }
+            }
+            if (!cbs_ok) continue;
+
             DOUT << "[Phase 1] High-level paths computed" << std::endl;
 
             if (isTimeoutExceeded()) {
@@ -757,6 +775,64 @@ void CipherGeometricPlanner::separateStartCells() {
     }
 
     DOUT << "  All robots in distinct start cells." << std::endl;
+}
+
+bool CipherGeometricPlanner::decomposeAllLeavesOneLevel() {
+    DOUT << "  Decomposing all leaf cells one level deeper..." << std::endl;
+    auto grid_decomp = std::dynamic_pointer_cast<GridDecompositionImpl>(decomp_);
+    int max_levels = config_.conflict_resolution_config.max_refinement_levels;
+
+    std::function<void(int, std::vector<int>&)> collectLeaves = [&](int rid, std::vector<int>& out) {
+        if (!grid_decomp->hasDecomposed(rid)) { out.push_back(rid); return; }
+        for (int child : grid_decomp->getChildRegions(rid)) collectLeaves(child, out);
+    };
+
+    std::vector<int> leaves;
+    for (int r = 0; r < decomp_->getNumRegions(); ++r)
+        collectLeaves(r, leaves);
+
+    // Only decompose the shallowest leaves so that cells already split by
+    // separateStartCells() are not pushed one level ahead of everything else.
+    int min_depth = std::numeric_limits<int>::max();
+    for (int r : leaves)
+        min_depth = std::min(min_depth, decomp_->getDecompositionDepth(r));
+
+    if (min_depth >= max_levels)
+        return false;
+
+    std::vector<int> to_decompose;
+    for (int r : leaves)
+        if (decomp_->getDecompositionDepth(r) == min_depth)
+            to_decompose.push_back(r);
+
+    std::vector<std::string> removed_viz_ids;
+    std::vector<std::tuple<std::string, std::vector<double>, std::vector<double>>> new_cells;
+
+    for (int r : to_decompose) {
+        std::string parent_viz_id =
+            region_viz_id_.count(r) ? region_viz_id_[r] : "c" + std::to_string(r);
+        removed_viz_ids.push_back(parent_viz_id);
+
+        decomp_->Decompose(r);
+        region_viz_id_.erase(r);
+
+        for (int child : grid_decomp->getChildRegions(r)) {
+            region_viz_id_[child] = parent_viz_id + "_" + std::to_string(child);
+            if (do_viz_) {
+                auto cb = decomp_->getCellBounds(child);
+                new_cells.emplace_back(
+                    region_viz_id_[child],
+                    std::vector<double>(cb.low.begin(), cb.low.end()),
+                    std::vector<double>(cb.high.begin(), cb.high.end()));
+            }
+        }
+    }
+
+    if (do_viz_)
+        vizEmitGridUpdate(removed_viz_ids, new_cells);
+
+    DOUT << "  Decomposed " << to_decompose.size() << " leaf cell(s)." << std::endl;
+    return true;
 }
 
 void CipherGeometricPlanner::setupCollisionManager() {
@@ -2389,6 +2465,7 @@ int main(int argc, char** argv)
             if (cfg["seed"])            config.seed = cfg["seed"].as<int>();
             if (cfg["region_size"])     config.decomposition_region_length = cfg["region_size"].as<int>();
             if (cfg["cbs_capacity"])    config.mapf_config.region_capacity = cfg["cbs_capacity"].as<int>();
+            if (cfg["cbs_timeout"])     config.mapf_config.mapf_timeout = cfg["cbs_timeout"].as<double>();
             if (cfg["max_obstacle_volume_percent"])
                 config.mapf_config.max_obstacle_volume_percent = cfg["max_obstacle_volume_percent"].as<double>();
             if (cfg["robot_cell_size_ratio"])

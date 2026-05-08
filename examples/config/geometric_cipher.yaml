@@ -4,8 +4,9 @@ seed: -1
 region_size: 5
 robot_cell_size_ratio: 1.3
 cbs_capacity: 1
-max_obstacle_volume_percent: 0.8
+max_obstacle_volume_percent: 0.5
 max_initial_extensions: 1000
 max_blocked_edge_retries: 5
 max_no_progress_iters: 20
 restrict_sampling_to_cell: false
+cbs_timeout: 5.0

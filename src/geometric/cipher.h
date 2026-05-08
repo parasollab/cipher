@@ -348,6 +348,7 @@ private:
     // Helper methods
     void setupDecomposition();
     void separateStartCells();
+    bool decomposeAllLeavesOneLevel();
     void setupCollisionManager();
     void setupRobots();
     void cleanup();
