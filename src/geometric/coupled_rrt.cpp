@@ -34,7 +34,6 @@ CompoundStateValidityChecker::CompoundStateValidityChecker(
 
 bool CompoundStateValidityChecker::isValid(const ob::State* state) const
 {
-    // Check bounds
     if (!si_->satisfiesBounds(state)) {
         return false;
     }
@@ -119,9 +118,22 @@ CompoundGoalCondition::CompoundGoalCondition(
     const ob::CompoundStateSpace* css,
     const std::vector<ob::State*>& goal_states,
     double threshold)
-    : ob::GoalRegion(si), css_(css), goal_states_(goal_states)
+    : ob::GoalSampleableRegion(si), css_(css), goal_states_(goal_states)
 {
     threshold_ = threshold;
+}
+
+void CompoundGoalCondition::sampleGoal(ob::State* st) const
+{
+    auto* compound = st->as<ob::CompoundState>();
+    for (size_t i = 0; i < goal_states_.size(); ++i) {
+        css_->getSubspace(i)->copyState(compound->components[i], goal_states_[i]);
+    }
+}
+
+unsigned int CompoundGoalCondition::maxSampleCount() const
+{
+    return 1;
 }
 
 double CompoundGoalCondition::distanceGoal(const ob::State* st) const
@@ -158,6 +170,15 @@ CoupledRRTConfig loadConfigFromYAML(const std::string& configFile)
         }
         if (cfg["goal_bias"]) {
             config.goal_bias = cfg["goal_bias"].as<double>();
+        }
+        if (cfg["range"]) {
+            config.range = cfg["range"].as<double>();
+        }
+        if (cfg["validity_resolution"]) {
+            config.validity_resolution = cfg["validity_resolution"].as<double>();
+        }
+        if (cfg["intermediate_states"]) {
+            config.intermediate_states = cfg["intermediate_states"].as<bool>();
         }
     } catch (const YAML::Exception& e) {
         std::cerr << "ERROR loading config file: " << e.what() << std::endl;
@@ -253,6 +274,7 @@ YAML::Node CoupledRRTPlanner::plan(const YAML::Node& env)
     compound_si->setStateValidityChecker(
         std::make_shared<CompoundStateValidityChecker>(
             compound_si, col_mng_environment, robots));
+    compound_si->setStateValidityCheckingResolution(config_.validity_resolution);
     compound_si->setup();
 
     // Allocate per-robot start/goal states from YAML
@@ -298,8 +320,11 @@ YAML::Node CoupledRRTPlanner::plan(const YAML::Node& env)
         compound_si, compound_ss.get(), goal_states, config_.goal_threshold));
 
     // Configure and run RRT
-    auto rrt = std::make_shared<og::RRT>(compound_si);
+    auto rrt = std::make_shared<og::RRT>(compound_si, config_.intermediate_states);
     rrt->setGoalBias(config_.goal_bias);
+    if (config_.range > 0.0) {
+        rrt->setRange(config_.range);
+    }
     rrt->setProblemDefinition(pdef);
     rrt->setup();
 

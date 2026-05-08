@@ -3,3 +3,5 @@
 goal_threshold: 1.0 # Distance threshold to consider goal reached
 goal_bias: 0.1 # Probability of sampling the goal during RRT expansion
 timelimit: 600
+range: 5.0 # max step length; try 0.5–2.0 depending on your env scale
+intermediate_states: false # set true only if you have very long, obstacle-free corridors
