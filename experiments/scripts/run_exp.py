@@ -170,7 +170,10 @@ def run_method(method, scenario, executable, problem_file, output_file, config_f
         for seed in range(1, num_seeds + 1):
             output_full_path = f"{output_file}/{robots}/{seed}.yaml"
             extra_args = get_extra_args(method, output_full_path, timeout)
-            result = run_planner(executable, problem_file + str(robots) + '.yaml', output_full_path, config_file, timeout, seed, f"{base_output_dir}/experiments/configs/{method}/{robots}", extra_args=extra_args, env=env)
+            seed_problem = Path(problem_file + str(robots) + f'_{seed}.yaml')
+            base_problem = Path(problem_file + str(robots) + '.yaml')
+            chosen_problem = seed_problem if seed_problem.exists() else base_problem
+            result = run_planner(executable, str(chosen_problem), output_full_path, config_file, timeout, seed, f"{base_output_dir}/experiments/configs/{method}/{robots}", extra_args=extra_args, env=env)
             print(f"\tResult: {result['solved']}, Time: {result['planning_time']:.2f}s, Timed out: {result['timed_out']}, Error: {result['error']}")
 
             if result['solved']:
