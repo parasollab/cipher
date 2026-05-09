@@ -17,6 +17,7 @@
 #include "utils/decomposition.h"
 #include "coupled_rrt.h"
 #include "../guided/guided_dbrrt.hpp"
+#include "../mapf/cbs.h"
 
 
 namespace ob = ompl::base;
@@ -94,6 +95,11 @@ struct CipherKinoConfig {
 
     // Decomposition output directory (empty string disables saving)
     std::string decomposition_output_dir = "";
+
+    // Transition feasibility: precompute structurally impassable cell-to-cell edges
+    bool check_transition_feasibility = false;
+    // Minimum free corridor width as a multiple of the largest robot diameter
+    double transition_feasibility_robot_size_multiplier = 1.0;
 
     // MAPF configuration
     MAPFConfig mapf_config;
@@ -341,11 +347,14 @@ private:
     // Decompose() call so local_mapf events always emit IDs that viz.py recognises.
     std::unordered_map<int, std::string> region_viz_id_;
 
+    ForbiddenEdgeSet structurally_forbidden_edges_; // Precomputed geometrically impassable edges
+
     // Helper methods
     void setupDecomposition();
     void setupCollisionManager();
     void setupRobots();
     void cleanup();
+    void computeTransitionFeasibility();
 
     // std::vector<fcl::CollisionObjectf*> getObstaclesInRegion(
     //     const std::vector<double>& region_min,

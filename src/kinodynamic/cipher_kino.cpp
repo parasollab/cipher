@@ -92,6 +92,8 @@ void CipherKinoPlanner::loadProblem(
     setupRobots();
     setupCollisionManager();
     setupDecomposition();
+    if (config_.check_transition_feasibility)
+        computeTransitionFeasibility();
 
     // Build and write visualization header now that robots + decomp are ready
     initVizHeader();
@@ -242,7 +244,8 @@ void CipherKinoPlanner::computeHighLevelPaths()
     DOUT << "Computing high-level paths..." << std::endl;
     CBS cbs_solver(config_.mapf_config.region_capacity, config_.mapf_config.mapf_timeout,
                     obstacles_, config_.mapf_config.max_obstacle_volume_percent);
-    high_level_paths_ = cbs_solver.solve(decomp_, start_states_, goal_states_);
+    high_level_paths_ = cbs_solver.solve(decomp_, start_states_, goal_states_,
+                                         /*allowed_regions=*/{}, structurally_forbidden_edges_);
 
     if (static_cast<int>(high_level_paths_.size()) < start_states_.size()) {
         std::cerr << "CBS failed to find paths for all robots." << std::endl;
@@ -642,6 +645,89 @@ void CipherKinoPlanner::setupDecomposition()
         region_viz_id_[r] = "c" + std::to_string(r);
 
     config_.conflict_resolution_config.max_refinement_levels = calculateMaxRefinementLevels();
+}
+
+void CipherKinoPlanner::computeTransitionFeasibility() {
+    structurally_forbidden_edges_.clear();
+
+    if (obstacles_.empty()) return;
+
+    // Compute max robot circumradius across all robots and parts.
+    float max_radius = 0.0f;
+    for (auto& robot : robots_) {
+        for (size_t p = 0; p < robot->numParts(); ++p) {
+            auto geom = robot->getCollisionGeometry(p);
+            if (!geom) continue;
+            geom->computeLocalAABB();
+            const auto& aabb = geom->aabb_local;
+            float hx = (aabb.max_[0] - aabb.min_[0]) / 2.0f;
+            float hy = (aabb.max_[1] - aabb.min_[1]) / 2.0f;
+            max_radius = std::max(max_radius, std::sqrt(hx * hx + hy * hy));
+        }
+    }
+    double threshold = config_.transition_feasibility_robot_size_multiplier * 2.0 * max_radius;
+
+    int total = decomp_->getTotalNumRegions();
+    for (int a = 0; a < total; ++a) {
+        if (!decomp_->isLeafRegion(a)) continue;
+        const auto ba = decomp_->getCellBounds(a);
+
+        std::vector<int> neighbors;
+        decomp_->getNeighbors(a, neighbors);
+
+        for (int b : neighbors) {
+            if (!decomp_->isLeafRegion(b)) continue;
+            const auto bb = decomp_->getCellBounds(b);
+
+            // Determine the shared boundary axis and the 1D free interval on the boundary.
+            double seg_lo, seg_hi;
+            bool shared_in_y;
+            if (std::abs(ba.high[0] - bb.low[0]) < 1e-9 || std::abs(bb.high[0] - ba.low[0]) < 1e-9) {
+                // Vertical boundary: shared extent in Y
+                shared_in_y = true;
+                seg_lo = std::max(ba.low[1], bb.low[1]);
+                seg_hi = std::min(ba.high[1], bb.high[1]);
+            } else {
+                // Horizontal boundary: shared extent in X
+                shared_in_y = false;
+                seg_lo = std::max(ba.low[0], bb.low[0]);
+                seg_hi = std::min(ba.high[0], bb.high[0]);
+            }
+
+            if (seg_hi <= seg_lo) continue;
+
+            // Subtract obstacle AABB projections to find free intervals.
+            std::vector<std::pair<double,double>> covered;
+            for (auto* obs : obstacles_) {
+                const auto& aabb = obs->getAABB();
+                double lo = shared_in_y ? (double)aabb.min_[1] : (double)aabb.min_[0];
+                double hi = shared_in_y ? (double)aabb.max_[1] : (double)aabb.max_[0];
+                double clo = std::max(lo, seg_lo);
+                double chi = std::min(hi, seg_hi);
+                if (chi > clo)
+                    covered.emplace_back(clo, chi);
+            }
+
+            // Find the longest free sub-interval.
+            std::sort(covered.begin(), covered.end());
+            double longest_free = 0.0;
+            double cur = seg_lo;
+            for (auto& [clo, chi] : covered) {
+                if (clo > cur)
+                    longest_free = std::max(longest_free, clo - cur);
+                cur = std::max(cur, chi);
+            }
+            longest_free = std::max(longest_free, seg_hi - cur);
+
+            if (longest_free < threshold) {
+                structurally_forbidden_edges_.insert({a, b});
+                structurally_forbidden_edges_.insert({b, a});
+            }
+        }
+    }
+
+    DOUT << "computeTransitionFeasibility: " << structurally_forbidden_edges_.size() / 2
+         << " impassable cell transitions (threshold=" << threshold << ")" << std::endl;
 }
 
 void CipherKinoPlanner::setupCollisionManager()
@@ -2311,6 +2397,11 @@ int main(int argc, char** argv)
                 config.options_trajopt.solver_id = cfg["solver_id"].as<int>();
             if (cfg["region_bounds_weight"])
                 config.options_trajopt.region_bounds_weight = cfg["region_bounds_weight"].as<double>();
+            if (cfg["check_transition_feasibility"])
+                config.check_transition_feasibility = cfg["check_transition_feasibility"].as<bool>();
+            if (cfg["transition_feasibility_robot_size_multiplier"])
+                config.transition_feasibility_robot_size_multiplier =
+                    cfg["transition_feasibility_robot_size_multiplier"].as<double>();
         } catch (const YAML::Exception& e) {
             std::cerr << "ERROR loading config file: " << e.what() << std::endl;
             return 1;

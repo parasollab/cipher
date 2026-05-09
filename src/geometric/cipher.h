@@ -106,6 +106,11 @@ struct CipherGeometricConfig {
     // Decomposition output directory (empty string disables saving)
     std::string decomposition_output_dir = "";
 
+    // Transition feasibility: precompute structurally impassable cell-to-cell edges
+    bool check_transition_feasibility = false;
+    // Minimum free corridor width as a multiple of the largest robot diameter
+    double transition_feasibility_robot_size_multiplier = 1.0;
+
     // MAPF configuration
     MAPFConfig mapf_config;
 
@@ -343,11 +348,13 @@ private:
     // Decompose() call so local_mapf events always emit IDs that viz.py recognises.
     std::unordered_map<int, std::string> region_viz_id_;
 
-    ForbiddenEdgeSet forbidden_edges_;  // Cell edges globally removed from CBS graph
+    ForbiddenEdgeSet forbidden_edges_;              // Runtime-discovered impassable edges
+    ForbiddenEdgeSet structurally_forbidden_edges_; // Precomputed geometrically impassable edges
 
     // Helper methods
     void setupDecomposition();
     void separateStartCells();
+    void computeTransitionFeasibility();
     bool decomposeAllLeavesOneLevel();
     void setupCollisionManager();
     void setupRobots();
