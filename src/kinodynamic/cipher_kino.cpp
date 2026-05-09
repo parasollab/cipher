@@ -117,74 +117,107 @@ CipherKinoResult CipherKinoPlanner::plan()
 
     try {
         // Phase 1: Compute high-level paths over decomposition
+        bool cbs_exhausted = false;
         DOUT << "[Phase 1] Computing high-level paths..." << std::endl;
-        computeHighLevelPaths();
-        DOUT << "[Phase 1] High-level paths computed" << std::endl;
-
-        if (isTimeoutExceeded()) {
-            std::cerr << "Planning timeout exceeded after computing high-level paths" << std::endl;
-            result.success = false;
-            result.failure_reason = "timeout_high_level_paths";
-            auto end_time = std::chrono::steady_clock::now();
-            result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
-            result.resolution_stats = resolution_stats_;
-            return result;
+        try {
+            computeHighLevelPaths();
+            DOUT << "[Phase 1] High-level paths computed" << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[Phase 1] CBS failed (" << e.what()
+                      << "); falling back to composite planner" << std::endl;
+            cbs_exhausted = true;
         }
 
-        // Phase 2: Compute guided paths for each robot
-        DOUT << "[Phase 2] Computing guided paths..." << std::endl;
-        computeGuidedPaths();
-        DOUT << "[Phase 2] Guided paths computed" << std::endl;
-
-        if (isTimeoutExceeded()) {
-            std::cerr << "Planning timeout exceeded after computing guided paths" << std::endl;
-            result.success = false;
-            result.failure_reason = "timeout_guided_paths";
-            auto end_time = std::chrono::steady_clock::now();
-            result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
-            result.resolution_stats = resolution_stats_;
-            return result;
-        }
-
-        bool all_paths_found = true;
-        for (size_t r = 0; r < robot_paths_.size(); ++r) {
-            if (!robot_paths_[r]) {
-                std::cerr << "Robot " << r << " failed to find a guided path" << std::endl;
-                all_paths_found = false;
-            }
-        }
-        if (!all_paths_found) {
-            result.success = false;
-            result.failure_reason = "guided_path_failed";
-            auto end_time = std::chrono::steady_clock::now();
-            result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
-            result.resolution_stats = resolution_stats_;
-            return result;
-        }
-
-        DOUT << "[Phase 3] Checking paths for conflicts..." << std::endl;
-        bool conflicts_found = checkPathsForConflicts();
-        DOUT << "[Phase 3] Conflict checking complete: " << segment_conflicts_.size() << " conflicts found." << std::endl;
-
-        // Phase 4: Resolve conflicts 
-        if (conflicts_found) {
-            DOUT << "[Phase 5] Resolving conflicts..." << std::endl;
-            bool conflicts_resolved = resolveConflicts();
-            if (!conflicts_resolved) {
-                std::cerr << "Planning failed: could not resolve all conflicts" << std::endl;
+        if (cbs_exhausted) {
+            if (isTimeoutExceeded()) {
+                std::cerr << "Planning timeout exceeded before composite fallback" << std::endl;
                 result.success = false;
-                if (isTimeoutExceeded()) {
-                    result.failure_reason = "timeout_conflict_resolution";
-                } else {
-                    result.failure_reason = "strategies_exhausted";
-                }
+                result.failure_reason = "timeout_cbs_failed";
+            } else if (config_.conflict_resolution_config.max_composite_attempts <= 0) {
+                std::cerr << "CBS exhausted and composite fallback disabled (max_composite_attempts=0)" << std::endl;
+                result.success = false;
+                result.failure_reason = "cbs_failed_composite_disabled";
             } else {
-                DOUT << "[Phase 5] All conflicts resolved" << std::endl;
-                result.success = true;
+                DOUT << "[Fallback] CBS exhausted; attempting full-problem composite planner ("
+                     << config_.conflict_resolution_config.max_composite_attempts << " attempt(s))..." << std::endl;
+                std::vector<size_t> all_robot_indices;
+                for (size_t i = 0; i < robots_.size(); ++i) all_robot_indices.push_back(i);
+                KinoPlanningResult composite_result =
+                    useCompositePlanner(all_robot_indices, starts_, goals_, env_min_, env_max_);
+                result.success = composite_result.solved;
+                if (!composite_result.solved) {
+                    std::cerr << "CBS fallback: composite planner also failed" << std::endl;
+                    result.failure_reason = "cbs_failed_composite_failed";
+                } else {
+                    DOUT << "[Fallback] Composite planner succeeded" << std::endl;
+                }
             }
         } else {
-            DOUT << "[Phase 5] No conflicts to resolve" << std::endl;
-            result.success = true;
+            if (isTimeoutExceeded()) {
+                std::cerr << "Planning timeout exceeded after computing high-level paths" << std::endl;
+                result.success = false;
+                result.failure_reason = "timeout_high_level_paths";
+                auto end_time = std::chrono::steady_clock::now();
+                result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
+                result.resolution_stats = resolution_stats_;
+                return result;
+            }
+
+            // Phase 2: Compute guided paths for each robot
+            DOUT << "[Phase 2] Computing guided paths..." << std::endl;
+            computeGuidedPaths();
+            DOUT << "[Phase 2] Guided paths computed" << std::endl;
+
+            if (isTimeoutExceeded()) {
+                std::cerr << "Planning timeout exceeded after computing guided paths" << std::endl;
+                result.success = false;
+                result.failure_reason = "timeout_guided_paths";
+                auto end_time = std::chrono::steady_clock::now();
+                result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
+                result.resolution_stats = resolution_stats_;
+                return result;
+            }
+
+            bool all_paths_found = true;
+            for (size_t r = 0; r < robot_paths_.size(); ++r) {
+                if (!robot_paths_[r]) {
+                    std::cerr << "Robot " << r << " failed to find a guided path" << std::endl;
+                    all_paths_found = false;
+                }
+            }
+            if (!all_paths_found) {
+                result.success = false;
+                result.failure_reason = "guided_path_failed";
+                auto end_time = std::chrono::steady_clock::now();
+                result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
+                result.resolution_stats = resolution_stats_;
+                return result;
+            }
+
+            DOUT << "[Phase 3] Checking paths for conflicts..." << std::endl;
+            bool conflicts_found = checkPathsForConflicts();
+            DOUT << "[Phase 3] Conflict checking complete: " << segment_conflicts_.size() << " conflicts found." << std::endl;
+
+            // Phase 4: Resolve conflicts
+            if (conflicts_found) {
+                DOUT << "[Phase 5] Resolving conflicts..." << std::endl;
+                bool conflicts_resolved = resolveConflicts();
+                if (!conflicts_resolved) {
+                    std::cerr << "Planning failed: could not resolve all conflicts" << std::endl;
+                    result.success = false;
+                    if (isTimeoutExceeded()) {
+                        result.failure_reason = "timeout_conflict_resolution";
+                    } else {
+                        result.failure_reason = "strategies_exhausted";
+                    }
+                } else {
+                    DOUT << "[Phase 5] All conflicts resolved" << std::endl;
+                    result.success = true;
+                }
+            } else {
+                DOUT << "[Phase 5] No conflicts to resolve" << std::endl;
+                result.success = true;
+            }
         }
 
     } catch (const std::exception& e) {

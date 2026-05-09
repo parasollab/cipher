@@ -249,6 +249,7 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
 
     try {
         // Phase 1+2: CBS high-level paths + guided paths, with forbidden-edge retry
+        bool cbs_exhausted = false;
         int blocked_edge_attempts = 0;
         while (true) {
             DOUT << "[Phase 1] Computing high-level paths (attempt "
@@ -263,11 +264,14 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
                     std::cerr << "[Phase 1] CBS failed (" << e.what()
                               << "); decomposing all leaf cells one level and retrying" << std::endl;
                     if (!decomposeAllLeavesOneLevel()) {
-                        std::cerr << "[Phase 1] All cells at maximum decomposition depth; giving up" << std::endl;
-                        throw;
+                        std::cerr << "[Phase 1] All cells at maximum decomposition depth; falling back to composite planner" << std::endl;
+                        cbs_exhausted = true;
+                        break;
                     }
                 } else {
-                    throw;
+                    std::cerr << "[Phase 1] CBS failed again after decomposition; falling back to composite planner" << std::endl;
+                    cbs_exhausted = true;
+                    break;
                 }
             }
             if (!cbs_ok) continue;
@@ -310,29 +314,57 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
             high_level_paths_.clear();
         }
 
-        DOUT << "[Phase 3] Checking paths for conflicts..." << std::endl;
-        bool conflicts_found = checkPathsForConflicts();
-        DOUT << "[Phase 3] Conflict checking complete: " << segment_conflicts_.size() << " conflicts found." << std::endl;
-
-        // Phase 4: Resolve conflicts 
-        if (conflicts_found) {
-            DOUT << "[Phase 5] Resolving conflicts..." << std::endl;
-            bool conflicts_resolved = resolveConflicts();
-            if (!conflicts_resolved) {
-                std::cerr << "Planning failed: could not resolve all conflicts" << std::endl;
+        if (cbs_exhausted) {
+            // CBS could not find region-level paths even after decomposition; try planning
+            // all robots jointly in the full configuration space.
+            if (isTimeoutExceeded()) {
+                std::cerr << "Planning timeout exceeded before composite fallback" << std::endl;
                 result.success = false;
-                if (isTimeoutExceeded()) {
-                    result.failure_reason = "timeout_conflict_resolution";
-                } else {
-                    result.failure_reason = "strategies_exhausted";
-                }
+                result.failure_reason = "timeout_cbs_failed";
+            } else if (config_.conflict_resolution_config.max_composite_attempts <= 0) {
+                std::cerr << "CBS exhausted and composite fallback disabled (max_composite_attempts=0)" << std::endl;
+                result.success = false;
+                result.failure_reason = "cbs_failed_composite_disabled";
             } else {
-                DOUT << "[Phase 5] All conflicts resolved" << std::endl;
-                result.success = true;
+                DOUT << "[Fallback] CBS exhausted; attempting full-problem composite planner ("
+                     << config_.conflict_resolution_config.max_composite_attempts << " attempt(s))..." << std::endl;
+                std::vector<size_t> all_robot_indices;
+                for (size_t i = 0; i < robots_.size(); ++i) all_robot_indices.push_back(i);
+                GeometricPlanningResult composite_result =
+                    useCompositePlanner(all_robot_indices, starts_, goals_, env_min_, env_max_);
+                result.success = composite_result.solved;
+                if (!composite_result.solved) {
+                    std::cerr << "CBS fallback: composite planner also failed" << std::endl;
+                    result.failure_reason = "cbs_failed_composite_failed";
+                } else {
+                    DOUT << "[Fallback] Composite planner succeeded" << std::endl;
+                }
             }
         } else {
-            DOUT << "[Phase 5] No conflicts to resolve" << std::endl;
-            result.success = true;
+            DOUT << "[Phase 3] Checking paths for conflicts..." << std::endl;
+            bool conflicts_found = checkPathsForConflicts();
+            DOUT << "[Phase 3] Conflict checking complete: " << segment_conflicts_.size() << " conflicts found." << std::endl;
+
+            // Phase 4: Resolve conflicts
+            if (conflicts_found) {
+                DOUT << "[Phase 5] Resolving conflicts..." << std::endl;
+                bool conflicts_resolved = resolveConflicts();
+                if (!conflicts_resolved) {
+                    std::cerr << "Planning failed: could not resolve all conflicts" << std::endl;
+                    result.success = false;
+                    if (isTimeoutExceeded()) {
+                        result.failure_reason = "timeout_conflict_resolution";
+                    } else {
+                        result.failure_reason = "strategies_exhausted";
+                    }
+                } else {
+                    DOUT << "[Phase 5] All conflicts resolved" << std::endl;
+                    result.success = true;
+                }
+            } else {
+                DOUT << "[Phase 5] No conflicts to resolve" << std::endl;
+                result.success = true;
+            }
         }
 
     } catch (const std::exception& e) {
