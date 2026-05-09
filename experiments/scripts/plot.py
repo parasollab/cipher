@@ -26,7 +26,7 @@ CONFIGS = [
         'label': 'geometric',
         'summary_file': 'summary.csv',
         'scenarios': [
-            'open',
+            'open', 'rooms',
             'low_clutter', 'medium_clutter', 'high_clutter',
         ],
         'methods': ['coupled_rrt', 'decoupled_rrt', 'srrt', 'drrt', 'arc', 'geometric_cipher'],
@@ -48,7 +48,8 @@ CONFIGS = [
 
 
 def _draw_time(df, scenario, methods, num_robots, ax):
-    df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & (df['robots'].isin(num_robots)) & (df['planning_time'] < 600)].copy()
+    robot_mask = df['robots'].isin(num_robots) if num_robots is not None else True
+    df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & robot_mask & (df['planning_time'] < 600)].copy()
     df_filtered = df_filtered[~((df_filtered['method'] == 'srrt') & (df_filtered['planning_time'] >= 480))]
     df_filtered['planning_time'] = df_filtered['planning_time'].replace(0, 1e-4)
     df_filtered['method'] = df_filtered['method'].map(lambda m: name_map.get(m, m))
@@ -65,7 +66,8 @@ def _draw_time(df, scenario, methods, num_robots, ax):
 
 
 def _draw_success_rate(df, scenario, methods, num_robots, ax):
-    df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & (df['robots'].isin(num_robots))].copy()
+    robot_mask = df['robots'].isin(num_robots) if num_robots is not None else True
+    df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & robot_mask].copy()
     df_filtered['method'] = df_filtered['method'].map(lambda m: name_map.get(m, m))
     present = [m for m in ALL_DISPLAY_NAMES if m in df_filtered['method'].unique()]
     ax.set_title('Success Rate')
@@ -79,7 +81,8 @@ def _draw_success_rate(df, scenario, methods, num_robots, ax):
 
 
 def _draw_makespan(df, scenario, methods, num_robots, ax):
-    df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & (df['robots'].isin(num_robots))].copy()
+    robot_mask = df['robots'].isin(num_robots) if num_robots is not None else True
+    df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & robot_mask].copy()
     df_filtered['method'] = df_filtered['method'].map(lambda m: name_map.get(m, m))
     present = [m for m in ALL_DISPLAY_NAMES if m in df_filtered['method'].unique()]
     ax.set_title('Makespan')
@@ -140,7 +143,7 @@ def generate_pdf(configs, results_dir, num_robots, pdf_path):
 
 def main():
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    num_robots = [2, 4, 8, 16]
+    num_robots = None  # None means all robot counts present in the data
     base_plot_dir = os.path.join(project_root, 'experiments', 'plots')
     results_dir = os.path.join(project_root, 'experiments', 'results')
 
