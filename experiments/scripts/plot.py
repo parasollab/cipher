@@ -13,7 +13,8 @@ name_map = {
     'drrt': 'MRdRRT',
     'arc': 'ARC',
     'kcbs': 'KCBS',
-    'k_arc': 'K-ARC'
+    'k_arc': 'K-ARC',
+    'geometric_cipher': 'CIPHER',
 }
 
 CONFIGS = [
@@ -23,8 +24,9 @@ CONFIGS = [
         'scenarios': [
             'narrow', 'open', 'rooms', 'cross',
             'low_clutter', 'medium_clutter', 'high_clutter',
+            'open_obstacles'
         ],
-        'methods': ['coupled_rrt', 'decoupled_rrt', 'srrt', 'drrt', 'arc'],
+        'methods': ['coupled_rrt', 'decoupled_rrt', 'srrt', 'drrt', 'arc', 'geometric_cipher'],
     },
     {
         'label': 'kinodynamic',
@@ -43,7 +45,9 @@ CONFIGS = [
 
 
 def _draw_time(df, scenario, methods, num_robots, ax):
-    df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & (df['robots'].isin(num_robots))]
+    df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & (df['robots'].isin(num_robots)) & (df['planning_time'] < 600)].copy()
+    df_filtered = df_filtered[~((df_filtered['method'] == 'srrt') & (df_filtered['planning_time'] >= 480))]
+    df_filtered['planning_time'] = df_filtered['planning_time'].replace(0, 1e-4)
     sns.lineplot(x='robots', y='planning_time', hue='method', data=df_filtered, err_style="bars", marker='o', ax=ax)
     ax.set_title('Planning Time')
     ax.set_xlabel('Number of Robots')
@@ -110,7 +114,10 @@ def generate_pdf(configs, results_dir, num_robots, pdf_path):
     drawers = [_draw_time, _draw_success_rate, _draw_makespan]
     with pdf_backend.PdfPages(pdf_path) as pdf:
         for cfg in configs:
-            df = pd.read_csv(os.path.join(results_dir, cfg['summary_file']))
+            csv_path = os.path.join(results_dir, cfg['summary_file'])
+            if not os.path.exists(csv_path):
+                continue
+            df = pd.read_csv(csv_path)
             for scenario in cfg['scenarios']:
                 fig, axes = plt.subplots(1, 3, figsize=(22, 5))
                 fig.suptitle(f"{cfg['label']} — {scenario}", fontsize=13)
@@ -134,9 +141,15 @@ def main():
         ('makespan', plot_makespan),
     ]
 
+    active_configs = []
     for cfg in CONFIGS:
+        csv_path = os.path.join(results_dir, cfg['summary_file'])
+        if not os.path.exists(csv_path):
+            print(f"Skipping '{cfg['label']}' (missing {csv_path})")
+            continue
+        active_configs.append(cfg)
         label = cfg['label']
-        df = pd.read_csv(os.path.join(results_dir, cfg['summary_file']))
+        df = pd.read_csv(csv_path)
         for metric, plot_fn in metrics:
             out_dir = os.path.join(base_plot_dir, metric, label)
             os.makedirs(out_dir, exist_ok=True)
@@ -144,7 +157,8 @@ def main():
                 plot_fn(df, scenario, cfg['methods'], num_robots, out_dir, f'{scenario}.png')
 
     os.makedirs(base_plot_dir, exist_ok=True)
-    generate_pdf(CONFIGS, results_dir, num_robots, os.path.join(base_plot_dir, 'all_plots.pdf'))
+    if active_configs:
+        generate_pdf(active_configs, results_dir, num_robots, os.path.join(base_plot_dir, 'all_plots.pdf'))
 
 if __name__ == "__main__":
     main()

@@ -122,20 +122,55 @@ def _generate(robots, obstacles, env_min, env_max, min_robot_dist, min_sg_dist, 
     return starts, goals
 
 
-def gen_seed_file(base_cfg, seed, models_dir, min_robot_dist, min_sg_dist, max_attempts):
+def _pick_types(n_robots, base_robots, robot_types_arg, rng):
+    """Return a list of robot type strings, one per robot."""
+    if robot_types_arg is not None:
+        if len(robot_types_arg) == 1:
+            return [robot_types_arg[0]] * n_robots
+        return [str(rng.choice(robot_types_arg)) for _ in range(n_robots)]
+    if base_robots:
+        base_types = [r['type'] for r in base_robots]
+        return [base_types[i % len(base_types)] for i in range(n_robots)]
+    raise ValueError("No robot types available: specify --robot-types")
+
+
+def _find_env_base(scenario_dir, scenario):
+    """Find a base yaml in scenario_dir to borrow the environment block from.
+
+    Priority: {scenario}.yaml (environment-only file) > any numbered base yaml.
+    """
+    env_only = scenario_dir / f'{scenario}.yaml'
+    if env_only.exists():
+        return env_only
+    candidates = sorted(scenario_dir.glob(f'{scenario}[0-9]*.yaml'))
+    candidates = [p for p in candidates if '_' not in p.stem]
+    return candidates[0] if candidates else None
+
+
+def gen_seed_file(base_cfg, n_robots, seed, models_dir, min_robot_dist, min_sg_dist, max_attempts, robot_types_arg=None):
     env = base_cfg['environment']
     obstacles = env.get('obstacles', [])
     rng = np.random.default_rng(seed)
+
+    types = _pick_types(n_robots, base_cfg.get('robots', []), robot_types_arg, rng)
+    robots = [{'type': t} for t in types]
+
     starts, goals = _generate(
-        base_cfg['robots'], obstacles,
+        robots, obstacles,
         env['min'], env['max'],
         min_robot_dist, min_sg_dist, max_attempts,
         rng, models_dir,
     )
+
     new_cfg = copy.deepcopy(base_cfg)
-    for i, robot in enumerate(new_cfg['robots']):
-        robot['start'] = _build_state(robot['type'], *starts[i])
-        robot['goal'] = _build_state(robot['type'], *goals[i])
+    new_cfg['robots'] = [
+        {
+            'type': types[i],
+            'start': _build_state(types[i], *starts[i]),
+            'goal': _build_state(types[i], *goals[i]),
+        }
+        for i in range(n_robots)
+    ]
     return new_cfg
 
 
@@ -148,6 +183,10 @@ def main():
     parser.add_argument('--scenarios', nargs='+', required=True)
     parser.add_argument('--robots', nargs='+', type=int, default=[2, 4, 8, 16])
     parser.add_argument('--seeds', type=int, default=10)
+    parser.add_argument('--robot-types', nargs='+', default=None,
+                        help="Robot type(s) to use. One type: all robots use it. "
+                             "Multiple types: each robot is randomly assigned one. "
+                             "Default: preserve types from base yaml.")
     parser.add_argument('--min-robot-dist', type=float, default=1.5,
                         help="Minimum distance between any two robot positions (default: 1.5)")
     parser.add_argument('--min-sg-dist', type=float, default=3.0,
@@ -160,16 +199,32 @@ def main():
         scenario_dir = project_root / 'experiments' / scenario
         for n in args.robots:
             base_path = scenario_dir / f'{scenario}{n}.yaml'
-            if not base_path.exists():
-                print(f"Skipping {base_path} (not found)")
-                continue
-            base_cfg = yaml.safe_load(open(base_path))
+            if base_path.exists():
+                base_cfg = yaml.safe_load(open(base_path))
+            else:
+                fallback = _find_env_base(scenario_dir, scenario)
+                if fallback is None:
+                    print(f"No base yaml found in {scenario_dir}, skipping {n} robots")
+                    continue
+                base_cfg = yaml.safe_load(open(fallback))
+                if args.robot_types is None and not base_cfg.get('robots'):
+                    print(f"Warning: {fallback.name} has no robots and --robot-types not set; skipping {n} robots")
+                    continue
+                print(f"Using environment from {fallback.name}")
+
+            out_dir = scenario_dir / 'seeds' / str(n)
+            out_dir.mkdir(parents=True, exist_ok=True)
+
             for seed in range(1, args.seeds + 1):
-                out_path = scenario_dir / f'{scenario}{n}_{seed}.yaml'
-                new_cfg = gen_seed_file(base_cfg, seed, models_dir, args.min_robot_dist, args.min_sg_dist, args.max_attempts)
+                out_path = out_dir / f'{seed}.yaml'
+                new_cfg = gen_seed_file(
+                    base_cfg, n, seed, models_dir,
+                    args.min_robot_dist, args.min_sg_dist, args.max_attempts,
+                    robot_types_arg=args.robot_types,
+                )
                 with open(out_path, 'w') as f:
                     yaml.dump(new_cfg, f, default_flow_style=None)
-            print(f"Generated {scenario}{n} seeds 1-{args.seeds}")
+            print(f"Generated {scenario} seeds 1-{args.seeds} for {n} robots → seeds/{n}/")
 
 
 if __name__ == '__main__':
