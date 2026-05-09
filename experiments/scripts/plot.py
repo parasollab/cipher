@@ -17,14 +17,17 @@ name_map = {
     'geometric_cipher': 'CIPHER',
 }
 
+# CIPHER first, then all other methods in a stable order
+ALL_DISPLAY_NAMES = ['CIPHER', 'Coupled RRT', 'Decoupled RRT', 'sRRT', 'MRdRRT', 'ARC', 'KCBS', 'K-ARC']
+METHOD_PALETTE = dict(zip(ALL_DISPLAY_NAMES, sns.color_palette("tab10", len(ALL_DISPLAY_NAMES))))
+
 CONFIGS = [
     {
         'label': 'geometric',
         'summary_file': 'summary.csv',
         'scenarios': [
-            'narrow', 'open', 'rooms', 'cross',
+            'open',
             'low_clutter', 'medium_clutter', 'high_clutter',
-            'open_obstacles'
         ],
         'methods': ['coupled_rrt', 'decoupled_rrt', 'srrt', 'drrt', 'arc', 'geometric_cipher'],
     },
@@ -48,39 +51,45 @@ def _draw_time(df, scenario, methods, num_robots, ax):
     df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & (df['robots'].isin(num_robots)) & (df['planning_time'] < 600)].copy()
     df_filtered = df_filtered[~((df_filtered['method'] == 'srrt') & (df_filtered['planning_time'] >= 480))]
     df_filtered['planning_time'] = df_filtered['planning_time'].replace(0, 1e-4)
-    sns.lineplot(x='robots', y='planning_time', hue='method', data=df_filtered, err_style="bars", marker='o', ax=ax)
+    df_filtered['method'] = df_filtered['method'].map(lambda m: name_map.get(m, m))
+    present = [m for m in ALL_DISPLAY_NAMES if m in df_filtered['method'].unique()]
     ax.set_title('Planning Time')
     ax.set_xlabel('Number of Robots')
     ax.set_ylabel('Time (s)')
     ax.set_yscale('log')
     ax.grid(True, which="both", ls="--", linewidth=0.5)
-    handles, labels = ax.get_legend_handles_labels()
-    labels = [name_map.get(l, l) for l in labels]
-    ax.legend(handles, labels)
+    if df_filtered.empty or not present:
+        return
+    sns.lineplot(x='robots', y='planning_time', hue='method', hue_order=present, palette=METHOD_PALETTE, data=df_filtered, err_style="bars", marker='o', ax=ax)
+    ax.legend()
 
 
 def _draw_success_rate(df, scenario, methods, num_robots, ax):
-    df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & (df['robots'].isin(num_robots))]
-    sns.lineplot(x='robots', y='solved', hue='method', data=df_filtered, err_style=None, marker='o', ax=ax)
+    df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & (df['robots'].isin(num_robots))].copy()
+    df_filtered['method'] = df_filtered['method'].map(lambda m: name_map.get(m, m))
+    present = [m for m in ALL_DISPLAY_NAMES if m in df_filtered['method'].unique()]
     ax.set_title('Success Rate')
     ax.set_xlabel('Number of Robots')
     ax.set_ylabel('Success Rate')
     ax.grid(True, which="both", ls="--", linewidth=0.5)
-    handles, labels = ax.get_legend_handles_labels()
-    labels = [name_map.get(l, l) for l in labels]
-    ax.legend(handles, labels)
+    if df_filtered.empty or not present:
+        return
+    sns.lineplot(x='robots', y='solved', hue='method', hue_order=present, palette=METHOD_PALETTE, data=df_filtered, err_style=None, marker='o', ax=ax)
+    ax.legend()
 
 
 def _draw_makespan(df, scenario, methods, num_robots, ax):
-    df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & (df['robots'].isin(num_robots))]
-    sns.lineplot(x='robots', y='makespan', hue='method', data=df_filtered, err_style="bars", marker='o', ax=ax)
+    df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & (df['robots'].isin(num_robots))].copy()
+    df_filtered['method'] = df_filtered['method'].map(lambda m: name_map.get(m, m))
+    present = [m for m in ALL_DISPLAY_NAMES if m in df_filtered['method'].unique()]
     ax.set_title('Makespan')
     ax.set_xlabel('Number of Robots')
     ax.set_ylabel('Makespan (s)')
     ax.grid(True, which="both", ls="--", linewidth=0.5)
-    handles, labels = ax.get_legend_handles_labels()
-    labels = [name_map.get(l, l) for l in labels]
-    ax.legend(handles, labels)
+    if df_filtered.empty or not present:
+        return
+    sns.lineplot(x='robots', y='makespan', hue='method', hue_order=present, palette=METHOD_PALETTE, data=df_filtered, err_style="bars", marker='o', ax=ax)
+    ax.legend()
 
 
 def plot_time(df, scenario, methods, num_robots, output_dir, file_name):
