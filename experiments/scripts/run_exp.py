@@ -18,6 +18,7 @@ METHOD_EXECUTABLES = {
     'kcbs':               'db-CBS/main_kcbs',
     'db_cbs':             'db-CBS/db_cbs',
     'k_arc':              'k_arc',
+    'kinodynamic_cipher': 'kinodynamic_cipher',
 }
 
 def get_extra_args(method, output_full_path, timeout):

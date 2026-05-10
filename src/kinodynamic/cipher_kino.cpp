@@ -89,9 +89,10 @@ void CipherKinoPlanner::loadProblem(
     workspace_bounds_.setHigh(0, env_max[0]);
     workspace_bounds_.setHigh(1, env_max[1]);
 
-    setupRobots();
     setupCollisionManager();
+    setupRobots();
     setupDecomposition();
+    separateStartCells();
 
     // Build and write visualization header now that robots + decomp are ready
     initVizHeader();
@@ -118,7 +119,15 @@ CipherKinoResult CipherKinoPlanner::plan()
     try {
         // Phase 1: Compute high-level paths over decomposition
         DOUT << "[Phase 1] Computing high-level paths..." << std::endl;
-        computeHighLevelPaths();
+        try {
+            computeHighLevelPaths();
+        } catch (const std::exception& e) {
+            std::cerr << "[Phase 1] CBS failed (" << e.what()
+                      << "); decomposing all leaf cells one level and retrying" << std::endl;
+            if (!decomposeAllLeavesOneLevel())
+                throw;
+            computeHighLevelPaths();
+        }
         DOUT << "[Phase 1] High-level paths computed" << std::endl;
 
         if (isTimeoutExceeded()) {
@@ -376,6 +385,12 @@ void CipherKinoPlanner::computeGuidedPaths()
         dynobench::Trajectory traj_out;
         dynobench::Info_out out_info;
         dynoplan::Options_trajopt options_trajopt = config_.options_trajopt;
+        options_trajopt.region_bounds_weight = config_.region_bounds_weight;
+        options_trajopt.max_iter = 100;
+        options_trajopt.init_reg = 10e2;
+        // options_trajopt.states_reg = true;
+        // options_trajopt.use_finite_diff = true;
+        // options_trajopt.time_ref = 0.1;
 
         try {
             if (config_.guided_planner_method == "guided_idbrrt")
@@ -513,6 +528,7 @@ bool CipherKinoPlanner::checkPathsForConflicts()
         }
     }
 
+    vizEmitConflicts(segment_conflicts_);
     return !segment_conflicts_.empty();
 }
 
@@ -1457,7 +1473,12 @@ bool CipherKinoPlanner::refineExpandedRegion(
             dynobench::Trajectory traj_out;
             dynobench::Info_out out_info;
             dynoplan::Options_trajopt options_trajopt = config_.options_trajopt;
-            // options_trajopt.smooth_traj = false;
+            options_trajopt.region_bounds_weight = config_.region_bounds_weight;
+            options_trajopt.max_iter = 100;
+            options_trajopt.init_reg = 10e2;
+            // options_trajopt.states_reg = true;
+            // options_trajopt.use_finite_diff = true;
+            // options_trajopt.time_ref = 0.5;
 
             try {
                 if (config_.guided_planner_method == "guided_idbrrt")
@@ -2216,6 +2237,175 @@ void CipherKinoPlanner::vizEmitGridUpdate(
     vizWriteFile();
 }
 
+void CipherKinoPlanner::vizEmitConflicts(const std::vector<SegmentConflict>& conflicts)
+{
+    if (!do_viz_ || conflicts.empty()) return;
+
+    std::map<std::pair<size_t,size_t>, int> pair_first_timestep;
+    for (const auto& c : conflicts) {
+        if (c.type != SegmentConflict::ROBOT_ROBOT) continue;
+        auto key = std::make_pair(
+            std::min(c.robot_index_1, c.robot_index_2),
+            std::max(c.robot_index_1, c.robot_index_2));
+        auto it = pair_first_timestep.find(key);
+        if (it == pair_first_timestep.end())
+            pair_first_timestep[key] = c.timestep;
+        else
+            it->second = std::min(it->second, c.timestep);
+    }
+
+    for (const auto& [pair, timestep] : pair_first_timestep) {
+        YAML::Node ev;
+        ev["type"] = "collision";
+        YAML::Node robots_node;
+        robots_node.push_back("r" + std::to_string(pair.first));
+        robots_node.push_back("r" + std::to_string(pair.second));
+        ev["robots"] = robots_node;
+        ev["time"] = timestep * 0.1;
+        viz_events_.push_back(ev);
+    }
+
+    vizWriteFile();
+    DOUT << "[viz] collision events: " << pair_first_timestep.size()
+         << " pair(s)" << std::endl;
+}
+
+void CipherKinoPlanner::separateStartCells()
+{
+    DOUT << "Checking for robots sharing start cells..." << std::endl;
+
+    auto grid_decomp = std::dynamic_pointer_cast<GridDecompositionImpl>(decomp_);
+    int max_levels = config_.conflict_resolution_config.max_refinement_levels;
+
+    std::set<int> once_decomposed;
+
+    while (true) {
+        std::vector<int> start_regions(start_states_.size());
+        for (size_t i = 0; i < start_states_.size(); ++i)
+            start_regions[i] = decomp_->locateSubRegion(start_states_[i]);
+
+        std::map<int, std::vector<size_t>> cell_to_robots;
+        for (size_t i = 0; i < start_regions.size(); ++i)
+            cell_to_robots[start_regions[i]].push_back(i);
+
+        std::vector<int> to_decompose;
+        for (auto& [cell, robots] : cell_to_robots)
+            if (robots.size() > 1)
+                to_decompose.push_back(cell);
+
+        if (to_decompose.empty()) break;
+
+        for (int cell : to_decompose) {
+            if (decomp_->getDecompositionDepth(cell) >= max_levels) {
+                throw std::runtime_error(
+                    "separateStartCells: cannot separate robots — cell " +
+                    std::to_string(cell) + " reached maximum decomposition depth (" +
+                    std::to_string(max_levels) + ")");
+            }
+        }
+
+        std::vector<int> filtered;
+        for (int cell : to_decompose)
+            if (!once_decomposed.count(cell))
+                filtered.push_back(cell);
+
+        if (filtered.empty()) {
+            throw std::runtime_error(
+                "separateStartCells: cannot separate robots — start positions "
+                "are too close; cells already decomposed once");
+        }
+
+        std::vector<std::string> removed_viz_ids;
+        std::vector<std::tuple<std::string, std::vector<double>, std::vector<double>>> new_cells;
+
+        for (int r : filtered) {
+            std::string parent_viz_id =
+                region_viz_id_.count(r) ? region_viz_id_[r] : "c" + std::to_string(r);
+            removed_viz_ids.push_back(parent_viz_id);
+
+            decomp_->Decompose(r);
+
+            region_viz_id_.erase(r);
+            for (int child : grid_decomp->getChildRegions(r)) {
+                once_decomposed.insert(child);
+                region_viz_id_[child] = parent_viz_id + "_" + std::to_string(child);
+                if (do_viz_) {
+                    auto cb = decomp_->getCellBounds(child);
+                    new_cells.emplace_back(
+                        region_viz_id_[child],
+                        std::vector<double>(cb.low.begin(), cb.low.end()),
+                        std::vector<double>(cb.high.begin(), cb.high.end()));
+                }
+            }
+        }
+
+        if (do_viz_)
+            vizEmitGridUpdate(removed_viz_ids, new_cells);
+
+        DOUT << "  Decomposed " << filtered.size()
+             << " start cell(s); re-checking..." << std::endl;
+    }
+
+    DOUT << "  All robots in distinct start cells." << std::endl;
+}
+
+bool CipherKinoPlanner::decomposeAllLeavesOneLevel()
+{
+    DOUT << "  Decomposing all leaf cells one level deeper..." << std::endl;
+    auto grid_decomp = std::dynamic_pointer_cast<GridDecompositionImpl>(decomp_);
+    int max_levels = config_.conflict_resolution_config.max_refinement_levels;
+
+    std::function<void(int, std::vector<int>&)> collectLeaves = [&](int rid, std::vector<int>& out) {
+        if (!grid_decomp->hasDecomposed(rid)) { out.push_back(rid); return; }
+        for (int child : grid_decomp->getChildRegions(rid)) collectLeaves(child, out);
+    };
+
+    std::vector<int> leaves;
+    for (int r = 0; r < decomp_->getNumRegions(); ++r)
+        collectLeaves(r, leaves);
+
+    int min_depth = std::numeric_limits<int>::max();
+    for (int r : leaves)
+        min_depth = std::min(min_depth, decomp_->getDecompositionDepth(r));
+
+    if (min_depth >= max_levels)
+        return false;
+
+    std::vector<int> to_decompose;
+    for (int r : leaves)
+        if (decomp_->getDecompositionDepth(r) == min_depth)
+            to_decompose.push_back(r);
+
+    std::vector<std::string> removed_viz_ids;
+    std::vector<std::tuple<std::string, std::vector<double>, std::vector<double>>> new_cells;
+
+    for (int r : to_decompose) {
+        std::string parent_viz_id =
+            region_viz_id_.count(r) ? region_viz_id_[r] : "c" + std::to_string(r);
+        removed_viz_ids.push_back(parent_viz_id);
+
+        decomp_->Decompose(r);
+        region_viz_id_.erase(r);
+
+        for (int child : grid_decomp->getChildRegions(r)) {
+            region_viz_id_[child] = parent_viz_id + "_" + std::to_string(child);
+            if (do_viz_) {
+                auto cb = decomp_->getCellBounds(child);
+                new_cells.emplace_back(
+                    region_viz_id_[child],
+                    std::vector<double>(cb.low.begin(), cb.low.end()),
+                    std::vector<double>(cb.high.begin(), cb.high.end()));
+            }
+        }
+    }
+
+    if (do_viz_)
+        vizEmitGridUpdate(removed_viz_ids, new_cells);
+
+    DOUT << "  Decomposed " << to_decompose.size() << " leaf cell(s)." << std::endl;
+    return true;
+}
+
 // ============================================================================
 // Entry Point
 // ============================================================================
@@ -2276,8 +2466,10 @@ int main(int argc, char** argv)
                 config.options_dbrrt.do_optimization = cfg["do_optimization"].as<bool>();
             if (cfg["solver_id"])
                 config.options_trajopt.solver_id = cfg["solver_id"].as<int>();
-            if (cfg["region_bounds_weight"])
+            if (cfg["region_bounds_weight"]) {
                 config.options_trajopt.region_bounds_weight = cfg["region_bounds_weight"].as<double>();
+                config.region_bounds_weight = cfg["region_bounds_weight"].as<double>();
+            }
         } catch (const YAML::Exception& e) {
             std::cerr << "ERROR loading config file: " << e.what() << std::endl;
             return 1;

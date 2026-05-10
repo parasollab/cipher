@@ -111,7 +111,7 @@ struct CipherKinoConfig {
     dynoplan::Options_dbrrt options_dbrrt;
     dynoplan::Options_trajopt options_trajopt;
 
-    double region_bounds_weight = 50.0;
+    double region_bounds_weight = 200.0;
 
     // Conflict resolution configuration
     ConflictResolutionConfig conflict_resolution_config;
@@ -345,6 +345,8 @@ private:
     void setupDecomposition();
     void setupCollisionManager();
     void setupRobots();
+    void separateStartCells();
+    bool decomposeAllLeavesOneLevel();
     void cleanup();
 
     // std::vector<fcl::CollisionObjectf*> getObstaclesInRegion(
@@ -480,6 +482,7 @@ private:
                            const std::vector<std::tuple<std::string,
                                                         std::vector<double>,
                                                         std::vector<double>>>& new_cells);
+    void vizEmitConflicts(const std::vector<SegmentConflict>& conflicts);
 
 public:
     void setVizFile(const std::string& path) { viz_file_ = path; do_viz_ = !path.empty(); }
