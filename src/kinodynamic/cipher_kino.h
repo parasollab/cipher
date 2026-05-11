@@ -17,6 +17,7 @@
 #include "utils/decomposition.h"
 #include "coupled_rrt.h"
 #include "../guided/guided_dbrrt.hpp"
+#include "../mapf/cbs.h"
 
 
 namespace ob = ompl::base;
@@ -95,6 +96,11 @@ struct CipherKinoConfig {
     // Decomposition output directory (empty string disables saving)
     std::string decomposition_output_dir = "";
 
+    // Transition feasibility: precompute structurally impassable cell-to-cell edges
+    bool check_transition_feasibility = false;
+    // Minimum free corridor width as a multiple of the largest robot diameter
+    double transition_feasibility_robot_size_multiplier = 1.0;
+
     // MAPF configuration
     MAPFConfig mapf_config;
 
@@ -102,7 +108,7 @@ struct CipherKinoConfig {
     std::string composite_planner_method = "coupled_rrt";
 
     // Guided planner configuration
-    std::string guided_planner_method = "guided_dbrrt";
+    std::string guided_planner_method = "guided_idbrrt";
 
     // Dynobench/dynoplan configuration (required for guided_idbrrt)
     std::string models_base_path = "./db-CBS/dynoplan/dynobench/models";  // path to dynobench model YAML files (e.g. /path/to/models)
@@ -341,6 +347,8 @@ private:
     // Decompose() call so local_mapf events always emit IDs that viz.py recognises.
     std::unordered_map<int, std::string> region_viz_id_;
 
+    ForbiddenEdgeSet structurally_forbidden_edges_; // Precomputed geometrically impassable edges
+
     // Helper methods
     void setupDecomposition();
     void setupCollisionManager();
@@ -348,6 +356,7 @@ private:
     void separateStartCells();
     bool decomposeAllLeavesOneLevel();
     void cleanup();
+    void computeTransitionFeasibility();
 
     // std::vector<fcl::CollisionObjectf*> getObstaclesInRegion(
     //     const std::vector<double>& region_min,

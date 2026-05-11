@@ -1,0 +1,19 @@
+environment:
+  min: [0.0, 0.0]
+  max: [50.0, 50.0]
+  obstacles:
+  - center: [22, 22]
+    size: [8, 8]
+    type: box
+  - center: [8, 38]
+    size: [8, 8]
+    type: box
+  - center: [38, 12]
+    size: [8, 8]
+    type: box
+  - center: [30, 40]
+    size: [8, 8]
+    type: box
+  - center: [16, 5]
+    size: [8, 8]
+    type: box

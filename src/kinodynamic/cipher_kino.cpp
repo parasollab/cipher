@@ -92,7 +92,8 @@ void CipherKinoPlanner::loadProblem(
     setupCollisionManager();
     setupRobots();
     setupDecomposition();
-    separateStartCells();
+    if (config_.check_transition_feasibility)
+        computeTransitionFeasibility();
 
     // Build and write visualization header now that robots + decomp are ready
     initVizHeader();
@@ -118,8 +119,10 @@ CipherKinoResult CipherKinoPlanner::plan()
 
     try {
         // Phase 1: Compute high-level paths over decomposition
+        bool cbs_exhausted = false;
         DOUT << "[Phase 1] Computing high-level paths..." << std::endl;
         try {
+            try {
             computeHighLevelPaths();
         } catch (const std::exception& e) {
             std::cerr << "[Phase 1] CBS failed (" << e.what()
@@ -128,72 +131,103 @@ CipherKinoResult CipherKinoPlanner::plan()
                 throw;
             computeHighLevelPaths();
         }
-        DOUT << "[Phase 1] High-level paths computed" << std::endl;
-
-        if (isTimeoutExceeded()) {
-            std::cerr << "Planning timeout exceeded after computing high-level paths" << std::endl;
-            result.success = false;
-            result.failure_reason = "timeout_high_level_paths";
-            auto end_time = std::chrono::steady_clock::now();
-            result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
-            result.resolution_stats = resolution_stats_;
-            return result;
+            DOUT << "[Phase 1] High-level paths computed" << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "[Phase 1] CBS failed (" << e.what()
+                      << "); falling back to composite planner" << std::endl;
+            cbs_exhausted = true;
         }
 
-        // Phase 2: Compute guided paths for each robot
-        DOUT << "[Phase 2] Computing guided paths..." << std::endl;
-        computeGuidedPaths();
-        DOUT << "[Phase 2] Guided paths computed" << std::endl;
-
-        if (isTimeoutExceeded()) {
-            std::cerr << "Planning timeout exceeded after computing guided paths" << std::endl;
-            result.success = false;
-            result.failure_reason = "timeout_guided_paths";
-            auto end_time = std::chrono::steady_clock::now();
-            result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
-            result.resolution_stats = resolution_stats_;
-            return result;
-        }
-
-        bool all_paths_found = true;
-        for (size_t r = 0; r < robot_paths_.size(); ++r) {
-            if (!robot_paths_[r]) {
-                std::cerr << "Robot " << r << " failed to find a guided path" << std::endl;
-                all_paths_found = false;
-            }
-        }
-        if (!all_paths_found) {
-            result.success = false;
-            result.failure_reason = "guided_path_failed";
-            auto end_time = std::chrono::steady_clock::now();
-            result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
-            result.resolution_stats = resolution_stats_;
-            return result;
-        }
-
-        DOUT << "[Phase 3] Checking paths for conflicts..." << std::endl;
-        bool conflicts_found = checkPathsForConflicts();
-        DOUT << "[Phase 3] Conflict checking complete: " << segment_conflicts_.size() << " conflicts found." << std::endl;
-
-        // Phase 4: Resolve conflicts 
-        if (conflicts_found) {
-            DOUT << "[Phase 5] Resolving conflicts..." << std::endl;
-            bool conflicts_resolved = resolveConflicts();
-            if (!conflicts_resolved) {
-                std::cerr << "Planning failed: could not resolve all conflicts" << std::endl;
+        if (cbs_exhausted) {
+            if (isTimeoutExceeded()) {
+                std::cerr << "Planning timeout exceeded before composite fallback" << std::endl;
                 result.success = false;
-                if (isTimeoutExceeded()) {
-                    result.failure_reason = "timeout_conflict_resolution";
-                } else {
-                    result.failure_reason = "strategies_exhausted";
-                }
+                result.failure_reason = "timeout_cbs_failed";
+            } else if (config_.conflict_resolution_config.max_composite_attempts <= 0) {
+                std::cerr << "CBS exhausted and composite fallback disabled (max_composite_attempts=0)" << std::endl;
+                result.success = false;
+                result.failure_reason = "cbs_failed_composite_disabled";
             } else {
-                DOUT << "[Phase 5] All conflicts resolved" << std::endl;
-                result.success = true;
+                DOUT << "[Fallback] CBS exhausted; attempting full-problem composite planner ("
+                     << config_.conflict_resolution_config.max_composite_attempts << " attempt(s))..." << std::endl;
+                std::vector<size_t> all_robot_indices;
+                for (size_t i = 0; i < robots_.size(); ++i) all_robot_indices.push_back(i);
+                KinoPlanningResult composite_result =
+                    useCompositePlanner(all_robot_indices, starts_, goals_, env_min_, env_max_);
+                result.success = composite_result.solved;
+                if (!composite_result.solved) {
+                    std::cerr << "CBS fallback: composite planner also failed" << std::endl;
+                    result.failure_reason = "cbs_failed_composite_failed";
+                } else {
+                    DOUT << "[Fallback] Composite planner succeeded" << std::endl;
+                }
             }
         } else {
-            DOUT << "[Phase 5] No conflicts to resolve" << std::endl;
-            result.success = true;
+            if (isTimeoutExceeded()) {
+                std::cerr << "Planning timeout exceeded after computing high-level paths" << std::endl;
+                result.success = false;
+                result.failure_reason = "timeout_high_level_paths";
+                auto end_time = std::chrono::steady_clock::now();
+                result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
+                result.resolution_stats = resolution_stats_;
+                return result;
+            }
+
+            // Phase 2: Compute guided paths for each robot
+            DOUT << "[Phase 2] Computing guided paths..." << std::endl;
+            computeGuidedPaths();
+            DOUT << "[Phase 2] Guided paths computed" << std::endl;
+
+            if (isTimeoutExceeded()) {
+                std::cerr << "Planning timeout exceeded after computing guided paths" << std::endl;
+                result.success = false;
+                result.failure_reason = "timeout_guided_paths";
+                auto end_time = std::chrono::steady_clock::now();
+                result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
+                result.resolution_stats = resolution_stats_;
+                return result;
+            }
+
+            bool all_paths_found = true;
+            for (size_t r = 0; r < robot_paths_.size(); ++r) {
+                if (!robot_paths_[r]) {
+                    std::cerr << "Robot " << r << " failed to find a guided path" << std::endl;
+                    all_paths_found = false;
+                }
+            }
+            if (!all_paths_found) {
+                result.success = false;
+                result.failure_reason = "guided_path_failed";
+                auto end_time = std::chrono::steady_clock::now();
+                result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
+                result.resolution_stats = resolution_stats_;
+                return result;
+            }
+
+            DOUT << "[Phase 3] Checking paths for conflicts..." << std::endl;
+            bool conflicts_found = checkPathsForConflicts();
+            DOUT << "[Phase 3] Conflict checking complete: " << segment_conflicts_.size() << " conflicts found." << std::endl;
+
+            // Phase 4: Resolve conflicts
+            if (conflicts_found) {
+                DOUT << "[Phase 5] Resolving conflicts..." << std::endl;
+                bool conflicts_resolved = resolveConflicts();
+                if (!conflicts_resolved) {
+                    std::cerr << "Planning failed: could not resolve all conflicts" << std::endl;
+                    result.success = false;
+                    if (isTimeoutExceeded()) {
+                        result.failure_reason = "timeout_conflict_resolution";
+                    } else {
+                        result.failure_reason = "strategies_exhausted";
+                    }
+                } else {
+                    DOUT << "[Phase 5] All conflicts resolved" << std::endl;
+                    result.success = true;
+                }
+            } else {
+                DOUT << "[Phase 5] No conflicts to resolve" << std::endl;
+                result.success = true;
+            }
         }
 
     } catch (const std::exception& e) {
@@ -218,7 +252,8 @@ void CipherKinoPlanner::computeHighLevelPaths()
     DOUT << "Computing high-level paths..." << std::endl;
     CBS cbs_solver(config_.mapf_config.region_capacity, config_.mapf_config.mapf_timeout,
                     obstacles_, config_.mapf_config.max_obstacle_volume_percent);
-    high_level_paths_ = cbs_solver.solve(decomp_, start_states_, goal_states_);
+    high_level_paths_ = cbs_solver.solve(decomp_, start_states_, goal_states_,
+                                         /*allowed_regions=*/{}, structurally_forbidden_edges_);
 
     if (static_cast<int>(high_level_paths_.size()) < start_states_.size()) {
         std::cerr << "CBS failed to find paths for all robots." << std::endl;
@@ -386,8 +421,8 @@ void CipherKinoPlanner::computeGuidedPaths()
         dynobench::Info_out out_info;
         dynoplan::Options_trajopt options_trajopt = config_.options_trajopt;
         options_trajopt.region_bounds_weight = config_.region_bounds_weight;
-        options_trajopt.max_iter = 100;
-        options_trajopt.init_reg = 10e2;
+        // options_trajopt.max_iter = 100;
+        // options_trajopt.init_reg = 10e2;
         // options_trajopt.states_reg = true;
         // options_trajopt.use_finite_diff = true;
         // options_trajopt.time_ref = 0.1;
@@ -625,6 +660,89 @@ void CipherKinoPlanner::setupDecomposition()
         region_viz_id_[r] = "c" + std::to_string(r);
 
     config_.conflict_resolution_config.max_refinement_levels = calculateMaxRefinementLevels();
+}
+
+void CipherKinoPlanner::computeTransitionFeasibility() {
+    structurally_forbidden_edges_.clear();
+
+    if (obstacles_.empty()) return;
+
+    // Compute max robot circumradius across all robots and parts.
+    float max_radius = 0.0f;
+    for (auto& robot : robots_) {
+        for (size_t p = 0; p < robot->numParts(); ++p) {
+            auto geom = robot->getCollisionGeometry(p);
+            if (!geom) continue;
+            geom->computeLocalAABB();
+            const auto& aabb = geom->aabb_local;
+            float hx = (aabb.max_[0] - aabb.min_[0]) / 2.0f;
+            float hy = (aabb.max_[1] - aabb.min_[1]) / 2.0f;
+            max_radius = std::max(max_radius, std::sqrt(hx * hx + hy * hy));
+        }
+    }
+    double threshold = config_.transition_feasibility_robot_size_multiplier * 2.0 * max_radius;
+
+    int total = decomp_->getTotalNumRegions();
+    for (int a = 0; a < total; ++a) {
+        if (!decomp_->isLeafRegion(a)) continue;
+        const auto ba = decomp_->getCellBounds(a);
+
+        std::vector<int> neighbors;
+        decomp_->getNeighbors(a, neighbors);
+
+        for (int b : neighbors) {
+            if (!decomp_->isLeafRegion(b)) continue;
+            const auto bb = decomp_->getCellBounds(b);
+
+            // Determine the shared boundary axis and the 1D free interval on the boundary.
+            double seg_lo, seg_hi;
+            bool shared_in_y;
+            if (std::abs(ba.high[0] - bb.low[0]) < 1e-9 || std::abs(bb.high[0] - ba.low[0]) < 1e-9) {
+                // Vertical boundary: shared extent in Y
+                shared_in_y = true;
+                seg_lo = std::max(ba.low[1], bb.low[1]);
+                seg_hi = std::min(ba.high[1], bb.high[1]);
+            } else {
+                // Horizontal boundary: shared extent in X
+                shared_in_y = false;
+                seg_lo = std::max(ba.low[0], bb.low[0]);
+                seg_hi = std::min(ba.high[0], bb.high[0]);
+            }
+
+            if (seg_hi <= seg_lo) continue;
+
+            // Subtract obstacle AABB projections to find free intervals.
+            std::vector<std::pair<double,double>> covered;
+            for (auto* obs : obstacles_) {
+                const auto& aabb = obs->getAABB();
+                double lo = shared_in_y ? (double)aabb.min_[1] : (double)aabb.min_[0];
+                double hi = shared_in_y ? (double)aabb.max_[1] : (double)aabb.max_[0];
+                double clo = std::max(lo, seg_lo);
+                double chi = std::min(hi, seg_hi);
+                if (chi > clo)
+                    covered.emplace_back(clo, chi);
+            }
+
+            // Find the longest free sub-interval.
+            std::sort(covered.begin(), covered.end());
+            double longest_free = 0.0;
+            double cur = seg_lo;
+            for (auto& [clo, chi] : covered) {
+                if (clo > cur)
+                    longest_free = std::max(longest_free, clo - cur);
+                cur = std::max(cur, chi);
+            }
+            longest_free = std::max(longest_free, seg_hi - cur);
+
+            if (longest_free < threshold) {
+                structurally_forbidden_edges_.insert({a, b});
+                structurally_forbidden_edges_.insert({b, a});
+            }
+        }
+    }
+
+    DOUT << "computeTransitionFeasibility: " << structurally_forbidden_edges_.size() / 2
+         << " impassable cell transitions (threshold=" << threshold << ")" << std::endl;
 }
 
 void CipherKinoPlanner::setupCollisionManager()
@@ -1474,8 +1592,8 @@ bool CipherKinoPlanner::refineExpandedRegion(
             dynobench::Info_out out_info;
             dynoplan::Options_trajopt options_trajopt = config_.options_trajopt;
             options_trajopt.region_bounds_weight = config_.region_bounds_weight;
-            options_trajopt.max_iter = 100;
-            options_trajopt.init_reg = 10e2;
+            // options_trajopt.max_iter = 100;
+            // options_trajopt.init_reg = 10e2;
             // options_trajopt.states_reg = true;
             // options_trajopt.use_finite_diff = true;
             // options_trajopt.time_ref = 0.5;
@@ -2466,10 +2584,13 @@ int main(int argc, char** argv)
                 config.options_dbrrt.do_optimization = cfg["do_optimization"].as<bool>();
             if (cfg["solver_id"])
                 config.options_trajopt.solver_id = cfg["solver_id"].as<int>();
-            if (cfg["region_bounds_weight"]) {
+            if (cfg["region_bounds_weight"])
                 config.options_trajopt.region_bounds_weight = cfg["region_bounds_weight"].as<double>();
-                config.region_bounds_weight = cfg["region_bounds_weight"].as<double>();
-            }
+            if (cfg["check_transition_feasibility"])
+                config.check_transition_feasibility = cfg["check_transition_feasibility"].as<bool>();
+            if (cfg["transition_feasibility_robot_size_multiplier"])
+                config.transition_feasibility_robot_size_multiplier =
+                    cfg["transition_feasibility_robot_size_multiplier"].as<double>();
         } catch (const YAML::Exception& e) {
             std::cerr << "ERROR loading config file: " << e.what() << std::endl;
             return 1;

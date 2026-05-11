@@ -3,7 +3,7 @@
 
 // OMPL base headers
 #include <ompl/base/StateValidityChecker.h>
-#include <ompl/base/goals/GoalRegion.h>
+#include <ompl/base/goals/GoalSampleableRegion.h>
 // #include <ompl/base/spaces/CompoundStateSpace.h>
 
 // FCL
@@ -26,7 +26,20 @@ struct CoupledRRTConfig {
     double time_limit = 60.0;
     double goal_threshold = 0.5;
     double goal_bias = 0.05;
-    int seed = -1;  // Random seed (-1 for random)
+    int seed = -1;  // -1 = random
+
+    // Maximum extension length per RRT step (0 = OMPL auto-selects based on space extent).
+    // Larger values explore faster but may miss narrow passages; smaller values are more
+    // cautious but build the tree more slowly.
+    double range = 0.0;
+
+    // Resolution for edge collision checking, as a fraction of the space's max extent
+    // (default 0.01 = 1%). Lower = finer checking = more isValid calls per edge.
+    double validity_resolution = 0.01;
+
+    // When true, intermediate states along each extension are also added to the tree,
+    // producing a denser tree at the cost of more memory and isValid calls.
+    bool intermediate_states = false;
 };
 
 class CompoundStateValidityChecker : public ob::StateValidityChecker
@@ -53,7 +66,7 @@ private:
 
 // Goal condition that is satisfied when all robots are within threshold of their
 // respective goals (measured as max per-robot distance in the composite space).
-class CompoundGoalCondition : public ob::GoalRegion
+class CompoundGoalCondition : public ob::GoalSampleableRegion
 {
 public:
     CompoundGoalCondition(
@@ -63,6 +76,8 @@ public:
         double threshold);
 
     double distanceGoal(const ob::State* st) const override;
+    void sampleGoal(ob::State* st) const override;
+    unsigned int maxSampleCount() const override;
 
 private:
     const ob::CompoundStateSpace* css_;

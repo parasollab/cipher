@@ -171,7 +171,11 @@ def run_method(method, scenario, executable, problem_file, output_file, config_f
         for seed in range(1, num_seeds + 1):
             output_full_path = f"{output_file}/{robots}/{seed}.yaml"
             extra_args = get_extra_args(method, output_full_path, timeout)
-            result = run_planner(executable, problem_file + str(robots) + '.yaml', output_full_path, config_file, timeout, seed, f"{base_output_dir}/experiments/configs/{method}/{robots}", extra_args=extra_args, env=env)
+            scenario_dir = Path(problem_file).parent
+            seed_problem = scenario_dir / 'seeds' / str(robots) / f'{seed}.yaml'
+            base_problem = Path(problem_file + str(robots) + '.yaml')
+            chosen_problem = seed_problem if seed_problem.exists() else base_problem
+            result = run_planner(executable, str(chosen_problem), output_full_path, config_file, timeout, seed, f"{base_output_dir}/experiments/configs/{method}/{robots}", extra_args=extra_args, env=env)
             print(f"\tResult: {result['solved']}, Time: {result['planning_time']:.2f}s, Timed out: {result['timed_out']}, Error: {result['error']}")
 
             if result['solved']:
@@ -193,6 +197,22 @@ def run_method(method, scenario, executable, problem_file, output_file, config_f
             print(f"Stopping early for {robots} robots due to zero success rate.")
             break
 
+def discover_robot_counts(scenario_dir, scenario):
+    """Return sorted list of robot counts that have seed files or base yamls."""
+    counts = set()
+    seeds_dir = scenario_dir / 'seeds'
+    if seeds_dir.exists():
+        for d in seeds_dir.iterdir():
+            if d.is_dir() and d.name.isdigit():
+                counts.add(int(d.name))
+    for p in scenario_dir.glob(f'{scenario}[0-9]*.yaml'):
+        if '_' not in p.stem:
+            suffix = p.stem[len(scenario):]
+            if suffix.isdigit():
+                counts.add(int(suffix))
+    return sorted(counts)
+
+
 def main():
     script_dir = Path(__file__).parent
     project_root = script_dir.parent.parent
@@ -201,7 +221,7 @@ def main():
     parser.add_argument('--scenarios', nargs='+', required=True, help="Scenario names")
     parser.add_argument('--methods', nargs='+', required=True, choices=list(METHOD_EXECUTABLES.keys()), help="Method names (k_arc requires install/lib on LD_LIBRARY_PATH, handled automatically)")
     parser.add_argument('--output', default='summary.csv', help="Output CSV filename in experiments/results/ (default: summary.csv)")
-    parser.add_argument('--robots', nargs='+', type=int, default=[2, 4, 8, 16], help="Robot counts (default: 2 4 8 16)")
+    parser.add_argument('--robots', nargs='+', type=int, default=None, help="Robot counts to run (default: all counts discovered from seeds/ and base yamls)")
     parser.add_argument('--seeds', type=int, default=10, help="Number of seeds per configuration (default: 10)")
     parser.add_argument('--timeout', type=float, default=600.0, help="Planner timeout in seconds (default: 600)")
     parser.add_argument('--overwrite', action='store_true', help="Overwrite the output file instead of appending")
@@ -218,6 +238,15 @@ def main():
             f.write("method,scenario,robots,seed,solved,planning_time,timed_out,makespan,sum_of_costs\n")
 
     for scenario in args.scenarios:
+        if args.robots is not None:
+            robot_counts = args.robots
+        else:
+            scenario_dir = project_root / 'experiments' / scenario
+            robot_counts = discover_robot_counts(scenario_dir, scenario)
+            if not robot_counts:
+                print(f"No robot counts found for scenario '{scenario}', skipping.")
+                continue
+            print(f"Discovered robot counts for '{scenario}': {robot_counts}")
         for method in methods:
             run_method(
                 method['name'],
@@ -227,7 +256,7 @@ def main():
                 str(project_root / 'experiments' / 'results' / scenario / f'{method["name"]}'),
                 str(project_root / 'examples' / 'config' / f'{method["name"]}.yaml'),
                 timeout=args.timeout,
-                num_robots=args.robots,
+                num_robots=robot_counts,
                 num_seeds=args.seeds,
                 summary_file=summary_file,
                 base_output_dir=project_root
