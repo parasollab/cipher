@@ -101,6 +101,11 @@ struct CipherKinoConfig {
     // Minimum free corridor width as a multiple of the largest robot diameter
     double transition_feasibility_robot_size_multiplier = 1.0;
 
+    // Guided planner extension-limit retry
+    int max_initial_extensions   = 0;  // 0 = time-based only (current behaviour)
+    int max_blocked_edge_retries = 0;  // 0 = no retries (current behaviour)
+    int max_no_progress_iters    = 0;  // 0 = disabled; forbid entry edge when coverage stalls
+
     // MAPF configuration
     MAPFConfig mapf_config;
 
@@ -347,6 +352,7 @@ private:
     // Decompose() call so local_mapf events always emit IDs that viz.py recognises.
     std::unordered_map<int, std::string> region_viz_id_;
 
+    ForbiddenEdgeSet forbidden_edges_;              // Runtime-discovered impassable edges
     ForbiddenEdgeSet structurally_forbidden_edges_; // Precomputed geometrically impassable edges
 
     // Helper methods

@@ -117,25 +117,73 @@ CipherKinoResult CipherKinoPlanner::plan()
     CipherKinoResult result;
     planning_start_time_ = std::chrono::steady_clock::now();
 
+    forbidden_edges_.clear();
+
     try {
         // Phase 1: Compute high-level paths over decomposition
         bool cbs_exhausted = false;
-        DOUT << "[Phase 1] Computing high-level paths..." << std::endl;
-        try {
+        int blocked_edge_attempts = 0;
+        while (true) {
+            DOUT << "[Phase 1] Computing high-level paths (attempt "
+                 << blocked_edge_attempts + 1 << ")..." << std::endl;
+            bool cbs_ok = false;
             try {
-            computeHighLevelPaths();
-        } catch (const std::exception& e) {
-            std::cerr << "[Phase 1] CBS failed (" << e.what()
-                      << "); decomposing all leaf cells one level and retrying" << std::endl;
-            if (!decomposeAllLeavesOneLevel())
-                throw;
-            computeHighLevelPaths();
-        }
+                computeHighLevelPaths();
+                cbs_ok = true;
+            } catch (const std::exception& e) {
+                if (blocked_edge_attempts == 0) {
+                    std::cerr << "[Phase 1] CBS failed (" << e.what()
+                              << "); decomposing all leaf cells one level and retrying" << std::endl;
+                    if (!decomposeAllLeavesOneLevel()) {
+                        std::cerr << "[Phase 1] All cells at maximum decomposition depth; falling back to composite planner" << std::endl;
+                        cbs_exhausted = true;
+                        break;
+                    }
+                } else {
+                    std::cerr << "[Phase 1] CBS failed again after decomposition; falling back to composite planner" << std::endl;
+                    cbs_exhausted = true;
+                    break;
+                }
+            }
+
+            if (!cbs_ok) continue;
+
             DOUT << "[Phase 1] High-level paths computed" << std::endl;
-        } catch (const std::exception& e) {
-            std::cerr << "[Phase 1] CBS failed (" << e.what()
-                      << "); falling back to composite planner" << std::endl;
-            cbs_exhausted = true;
+
+            if (isTimeoutExceeded()) {
+                std::cerr << "Planning timeout exceeded after computing high-level paths" << std::endl;
+                result.success = false;
+                result.failure_reason = "timeout_high_level_paths";
+                auto end_time = std::chrono::steady_clock::now();
+                result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
+                result.resolution_stats = resolution_stats_;
+                return result;
+            }
+
+            size_t prev_forbidden_count = forbidden_edges_.size();
+
+            DOUT << "[Phase 2] Computing guided paths..." << std::endl;
+            computeGuidedPaths();
+            DOUT << "[Phase 2] Guided paths computed" << std::endl;
+
+            if (isTimeoutExceeded()) {
+                std::cerr << "Planning timeout exceeded after computing guided paths" << std::endl;
+                result.success = false;
+                result.failure_reason = "timeout_guided_paths";
+                auto end_time = std::chrono::steady_clock::now();
+                result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
+                result.resolution_stats = resolution_stats_;
+                return result;
+            }
+
+            bool new_edges_added = forbidden_edges_.size() > prev_forbidden_count;
+            if (!new_edges_added || blocked_edge_attempts >= config_.max_blocked_edge_retries)
+                break;
+
+            ++blocked_edge_attempts;
+            DOUT << "[Retry] " << forbidden_edges_.size()
+                 << " forbidden edge(s); replanning high-level paths" << std::endl;
+            high_level_paths_.clear();
         }
 
         if (cbs_exhausted) {
@@ -163,31 +211,6 @@ CipherKinoResult CipherKinoPlanner::plan()
                 }
             }
         } else {
-            if (isTimeoutExceeded()) {
-                std::cerr << "Planning timeout exceeded after computing high-level paths" << std::endl;
-                result.success = false;
-                result.failure_reason = "timeout_high_level_paths";
-                auto end_time = std::chrono::steady_clock::now();
-                result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
-                result.resolution_stats = resolution_stats_;
-                return result;
-            }
-
-            // Phase 2: Compute guided paths for each robot
-            DOUT << "[Phase 2] Computing guided paths..." << std::endl;
-            computeGuidedPaths();
-            DOUT << "[Phase 2] Guided paths computed" << std::endl;
-
-            if (isTimeoutExceeded()) {
-                std::cerr << "Planning timeout exceeded after computing guided paths" << std::endl;
-                result.success = false;
-                result.failure_reason = "timeout_guided_paths";
-                auto end_time = std::chrono::steady_clock::now();
-                result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
-                result.resolution_stats = resolution_stats_;
-                return result;
-            }
-
             bool all_paths_found = true;
             for (size_t r = 0; r < robot_paths_.size(); ++r) {
                 if (!robot_paths_[r]) {
@@ -251,9 +274,11 @@ void CipherKinoPlanner::computeHighLevelPaths()
     // TODO: run MAPF solver (CBS / A* / decoupled) to fill high_level_paths_
     DOUT << "Computing high-level paths..." << std::endl;
     CBS cbs_solver(config_.mapf_config.region_capacity, config_.mapf_config.mapf_timeout,
-                    obstacles_, config_.mapf_config.max_obstacle_volume_percent);
+                    obstacles_, config_.mapf_config.max_obstacle_volume_percent);\
+    ForbiddenEdgeSet all_forbidden = forbidden_edges_;
+    all_forbidden.insert(structurally_forbidden_edges_.begin(), structurally_forbidden_edges_.end());
     high_level_paths_ = cbs_solver.solve(decomp_, start_states_, goal_states_,
-                                         /*allowed_regions=*/{}, structurally_forbidden_edges_);
+                                         /*allowed_regions=*/{}, all_forbidden);
 
     if (static_cast<int>(high_level_paths_.size()) < start_states_.size()) {
         std::cerr << "CBS failed to find paths for all robots." << std::endl;
@@ -1488,7 +1513,7 @@ bool CipherKinoPlanner::refineExpandedRegion(
         }
 
         local_high_level_paths = mapf_solver.solve(
-            decomp_, replan_hl_starts, replan_hl_goals, expanded_leaf_regions);
+            decomp_, replan_hl_starts, replan_hl_goals, expanded_leaf_regions, structurally_forbidden_edges_);
     }
 
     if (local_high_level_paths.empty()) {
