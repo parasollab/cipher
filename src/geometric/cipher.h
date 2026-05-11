@@ -16,6 +16,7 @@
 
 #include "utils/decomposition.h"
 #include "src/geometric/coupled_rrt.h"
+#include "src/geometric/decoupled_rrt.h"
 #include "src/guided/guided_geometric_rrt.h"
 #include "src/mapf/cbs.h"
 
@@ -374,6 +375,13 @@ private:
     // void updateDecomposition();
     // void expandSubproblem();
     GeometricPlanningResult useCompositePlanner(
+        const std::vector<size_t>& robot_indices,
+        const std::vector<std::vector<double>>& subproblem_starts,
+        const std::vector<std::vector<double>>& subproblem_goals,
+        const std::vector<double>& subproblem_env_min,
+        const std::vector<double>& subproblem_env_max);
+
+    GeometricPlanningResult useDecoupledPlanner(
         const std::vector<size_t>& robot_indices,
         const std::vector<std::vector<double>>& subproblem_starts,
         const std::vector<std::vector<double>>& subproblem_goals,

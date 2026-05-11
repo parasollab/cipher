@@ -8,6 +8,7 @@
 #include <ompl/base/goals/GoalRegion.h>
 #include <ompl/base/spaces/SE2StateSpace.h>
 #include <ompl/geometric/planners/rrt/RRT.h>
+#include <ompl/util/RandomNumbers.h>
 
 // FCL
 #include <fcl/fcl.h>
@@ -29,6 +30,8 @@
 // db-CBS robot dynamics
 #include "robots.h"
 #include "fclStateValidityChecker.hpp"
+
+#include "decoupled_rrt.h"
 
 namespace ob = ompl::base;
 namespace oc = ompl::control;
@@ -97,7 +100,6 @@ public:
             if (!state2.second) {
                 return true;
             }
-            // Try reading the state as SE2 to verify it's valid memory before getTransform
             const auto* se2 = state2.second->as<ob::SE2StateSpace::StateType>();
             const auto& t2 = other_robot->getTransform(state2.second, part);
             fcl::CollisionObjectf co2(other_robot->getCollisionGeometry(part));
@@ -108,9 +110,7 @@ public:
             fcl::CollisionRequest<float> request;
             fcl::CollisionResult<float> result;
             fcl::collide(&co1, &co2, request, result);
-            bool collision = result.isCollision();
-
-            if (collision) {
+            if (result.isCollision()) {
                 return false;
             }
         } else {
@@ -143,11 +143,11 @@ public:
     }
 
 private:
-    const ob::State* goal_state_;  // non-owning; lifetime managed by goal_states vector in main
+    const ob::State* goal_state_;
 };
 
 
-ob::PlannerPtr plannerAllocator(const ob::SpaceInformationPtr& si)
+static ob::PlannerPtr plannerAllocator(const ob::SpaceInformationPtr& si)
 {
     return std::make_shared<og::RRT>(si);
 }
@@ -176,76 +176,17 @@ static bool statesOverlap(
 }
 
 
-int main(int argc, char** argv)
+// ----------------------------------------------------------------------------
+
+DecoupledRRTPlanner::DecoupledRRTPlanner(const DecoupledRRTConfig& config)
+    : config_(config)
+{}
+
+YAML::Node DecoupledRRTPlanner::plan(const YAML::Node& env)
 {
-    // Parse command line arguments
-    std::string inputFile;
-    std::string outputFile;
-    std::string configFile;
-    double timelimit = 60.0;
-    double goal_threshold = 0.5;
-    int seed = -1;
-
-    po::options_description desc("Allowed options");
-    desc.add_options()
-        ("help,h", "Show help message")
-        ("input,i", po::value<std::string>(&inputFile)->required(), "Input YAML file")
-        ("output,o", po::value<std::string>(&outputFile)->required(), "Output YAML file")
-        ("cfg,c", po::value<std::string>(&configFile), "Configuration YAML file");
-
-    po::variables_map vm;
-    try {
-        po::store(po::parse_command_line(argc, argv, desc), vm);
-
-        if (vm.count("help")) {
-            std::cout << desc << std::endl;
-            return 0;
-        }
-
-        po::notify(vm);
-    } catch (const po::error& e) {
-        std::cerr << "ERROR: " << e.what() << std::endl;
-        std::cout << desc << std::endl;
-        return 1;
+    if (config_.seed >= 0) {
+        ompl::RNG::setSeed(config_.seed);
     }
-
-    // Load configuration file if provided
-    if (vm.count("cfg")) {
-        try {
-            YAML::Node cfg = YAML::LoadFile(configFile);
-            if (cfg["goal_threshold"]) {
-                goal_threshold = cfg["goal_threshold"].as<double>();
-            }
-            if (cfg["seed"]) {
-                seed = cfg["seed"].as<int>();
-            }
-            if (cfg["timelimit"]) {
-                timelimit = cfg["timelimit"].as<double>();
-            }
-        } catch (const YAML::Exception& e) {
-            std::cerr << "ERROR loading config file: " << e.what() << std::endl;
-            return 1;
-        }
-    }
-
-    // Set the random seed
-    if (seed >= 0) {
-        std::cout << "Setting random seed to: " << seed << std::endl;
-        ompl::RNG::setSeed(seed);
-    } else {
-        std::cout << "Using random seed" << std::endl;
-    }
-
-    // Load YAML configuration
-    std::cout << "Loading YAML file: " << inputFile << std::endl;
-    YAML::Node env;
-    try {
-        env = YAML::LoadFile(inputFile);
-    } catch (const YAML::Exception& e) {
-        std::cerr << "ERROR loading YAML file: " << e.what() << std::endl;
-        return 1;
-    }
-    std::cout << "YAML loaded successfully" << std::endl;
 
     // Parse environment bounds
     const auto& env_min = env["environment"]["min"];
@@ -257,14 +198,14 @@ int main(int argc, char** argv)
     position_bounds.setHigh(0, env_max[0].as<double>());
     position_bounds.setHigh(1, env_max[1].as<double>());
 
-    // Create FCL collision manager for obstacles
+    // Build obstacle collision manager
     auto col_mng_environment = std::make_shared<fcl::DynamicAABBTreeCollisionManagerf>();
     std::vector<fcl::CollisionObjectf*> obstacles;
 
     if (env["environment"]["obstacles"]) {
         for (const auto& obs : env["environment"]["obstacles"]) {
             if (obs["type"].as<std::string>() == "box") {
-                const auto& size = obs["size"];
+                const auto& size   = obs["size"];
                 const auto& center = obs["center"];
 
                 auto box = std::make_shared<fcl::Boxf>(
@@ -286,17 +227,7 @@ int main(int argc, char** argv)
         col_mng_environment->setup();
     }
 
-    std::cout << "Loaded " << obstacles.size() << " obstacles" << std::endl;
-
-    // Create multi-robot space information and problem definition
-    auto ma_si = std::make_shared<omrb::SpaceInformation>();
-    auto ma_pdef = std::make_shared<omrb::ProblemDefinition>(ma_si);
-
-    // --- Pass 1: Create robots and build all_robots map ---
-    // Each robot from create_robot() has an oc::SpaceInformation (control-based).
-    // For geometric planning we create a fresh ob::SpaceInformation from the same
-    // state space, avoiding the propagator requirement of oc::SpaceInformation::setup().
-    std::cout << "Creating robots..." << std::endl;
+    // --- Pass 1: Create robots ---
     std::vector<std::shared_ptr<Robot>> robots;
     std::vector<ob::SpaceInformationPtr> robot_sis;
     std::map<const ob::SpaceInformationPtr, std::shared_ptr<Robot>> all_robots;
@@ -304,7 +235,6 @@ int main(int argc, char** argv)
 
     for (const auto& robot_node : env["robots"]) {
         auto robotType = robot_node["type"].as<std::string>();
-        std::cout << "  Robot " << robot_idx << " (" << robotType << ")" << std::endl;
 
         auto robot = create_robot(robotType, position_bounds);
         auto state_space = robot->getSpaceInformation()->getStateSpace();
@@ -315,12 +245,12 @@ int main(int argc, char** argv)
         all_robots[robot_si] = robot;
         robots.push_back(robot);
         robot_sis.push_back(robot_si);
-        robot_idx++;
+        ++robot_idx;
     }
 
-    const int num_robots = robots.size();
+    const int num_robots = static_cast<int>(robots.size());
 
-    // --- Pass 2a: Parse start/goal states for all robots ---
+    // --- Pass 2a: Parse start/goal states ---
     std::vector<ob::State*> start_states;
     std::vector<ob::State*> goal_states;
     robot_idx = 0;
@@ -344,21 +274,17 @@ int main(int argc, char** argv)
         goal_se2->setYaw(goal_vec.size() > 2 ? goal_vec[2].as<double>() : 0.0);
         goal_states.push_back(goal_state);
 
-        std::cout << "    Start: (" << start_se2->getX() << ", " << start_se2->getY() << ")" << std::endl;
-        std::cout << "    Goal:  (" << goal_se2->getX() << ", " << goal_se2->getY() << ")" << std::endl;
-
-        robot_idx++;
+        ++robot_idx;
     }
 
-    // --- Pass 2b: Create validity checkers and problem definitions ---
-    // All goals are known now, so each checker can forbid other robots' goal positions.
+    // --- Pass 2b: Validity checkers and problem definitions ---
+    auto ma_si   = std::make_shared<omrb::SpaceInformation>();
+    auto ma_pdef = std::make_shared<omrb::ProblemDefinition>(ma_si);
+
     for (robot_idx = 0; robot_idx < num_robots; ++robot_idx) {
-        auto robot = robots[robot_idx];
+        auto robot    = robots[robot_idx];
         auto robot_si = robot_sis[robot_idx];
 
-        // Build list of every other robot's goal state for collision avoidance.
-        // Skip robot j's goal if it overlaps with robot K's start — robot K is
-        // already there at t=0 and will move away (dynamic checks handle timing).
         std::vector<std::pair<const ob::State*, std::shared_ptr<Robot>>> other_goals;
         for (int j = 0; j < num_robots; ++j) {
             if (j != robot_idx) {
@@ -377,139 +303,143 @@ int main(int argc, char** argv)
         auto pdef = std::make_shared<ob::ProblemDefinition>(robot_si);
         pdef->addStartState(start_states[robot_idx]);
         pdef->setGoal(std::make_shared<IndividualGoalCondition>(
-            robot_si, goal_states[robot_idx], goal_threshold));
+            robot_si, goal_states[robot_idx], config_.goal_threshold));
 
         ma_si->addIndividual(robot_si);
         ma_pdef->addIndividual(pdef);
     }
 
-    std::cout << "Planning for " << num_robots << " robots" << std::endl;
-
-    // Lock the multi-robot structures
     ma_si->lock();
     ma_pdef->lock();
-
-    // Set planner allocator
     ma_si->setPlannerAllocator(plannerAllocator);
 
-    // Create geometric PP planner
     auto planner = std::make_shared<omrg::PP>(ma_si);
     planner->setProblemDefinition(ma_pdef);
 
-    std::cout << "Planner configured. Starting search..." << std::endl;
-    std::cout << "  Goal threshold: " << goal_threshold << std::endl;
-    std::cout << "  Total time limit: " << timelimit << " seconds" << std::endl;
-
-    // Solve
     auto start_time = std::chrono::steady_clock::now();
-    bool solved = planner->as<omrb::Planner>()->solve(timelimit);
+    bool solved = planner->as<omrb::Planner>()->solve(config_.time_limit);
     auto end_time = std::chrono::steady_clock::now();
     double planning_time = std::chrono::duration<double>(end_time - start_time).count();
 
-    std::cout << "Planning completed in " << planning_time << " seconds" << std::endl;
-    std::cout << "Solution found: " << (solved ? "YES" : "NO") << std::endl;
-
-    // Write output
     YAML::Node output;
-    output["solved"] = solved;
+    output["solved"]        = solved;
     output["planning_time"] = planning_time;
 
     if (solved) {
-        std::cout << "Extracting solution paths..." << std::endl;
-
-        // Get solution plan
         omrb::PlanPtr solution = ma_pdef->getSolutionPlan();
         if (!solution) {
-            std::cerr << "ERROR: solution plan is null!" << std::endl;
-            return 1;
-        }
-
-        auto geom_plan = solution->as<omrg::PlanGeometric>();
-        if (!geom_plan) {
-            std::cerr << "ERROR: geom_plan cast failed!" << std::endl;
-            return 1;
-        }
-
-        // Verify all robots have paths — treat as failure if any are missing
-        for (int r = 0; r < num_robots; ++r) {
-            if (!geom_plan->getPath(r)) {
-                std::cout << "Robot " << r << " has no path — treating as failure." << std::endl;
-                solved = false;
-            }
-        }
-
-        if (!solved) {
-            std::cout << "Not all robots were solved. Marking as failure." << std::endl;
             output["solved"] = false;
         } else {
-            // Extract paths for each robot
-            YAML::Node result;
-            for (int r = 0; r < num_robots; ++r) {
-                YAML::Node robot_data;
-
-                og::PathGeometricPtr robot_path = geom_plan->getPath(r);
-
-                if (robot_path) {
-                    std::cout << "  Robot " << r << ": " << robot_path->getStateCount()
-                            << " states before interpolation" << std::endl;
-
-                    robot_path->interpolate();
-
-                    std::cout << "  Robot " << r << ": " << robot_path->getStateCount()
-                            << " states after interpolation" << std::endl;
-
-                    // Extract states
-                    YAML::Node states_node;
-                    for (size_t i = 0; i < robot_path->getStateCount(); ++i) {
-                        const ob::State* robot_state = robot_path->getState(i);
-                        if (!robot_state) {
-                            std::cerr << "ERROR: null state at index " << i << " for robot " << r << std::endl;
-                            break;
-                        }
-                        const ob::SE2StateSpace::StateType* se2_state =
-                            robot_state->as<ob::SE2StateSpace::StateType>();
-
-                        YAML::Node state_node;
-                        state_node.push_back(se2_state->getX());
-                        state_node.push_back(se2_state->getY());
-                        state_node.push_back(se2_state->getYaw());
-                        states_node.push_back(state_node);
+            auto geom_plan = solution->as<omrg::PlanGeometric>();
+            if (!geom_plan) {
+                output["solved"] = false;
+            } else {
+                for (int r = 0; r < num_robots; ++r) {
+                    if (!geom_plan->getPath(r)) {
+                        solved = false;
+                        break;
                     }
-                    robot_data["states"] = states_node;
                 }
 
-                result.push_back(robot_data);
+                if (!solved) {
+                    output["solved"] = false;
+                } else {
+                    YAML::Node result;
+                    for (int r = 0; r < num_robots; ++r) {
+                        YAML::Node robot_data;
+                        og::PathGeometricPtr robot_path = geom_plan->getPath(r);
+                        if (robot_path) {
+                            robot_path->interpolate();
+                            YAML::Node states_node;
+                            for (size_t i = 0; i < robot_path->getStateCount(); ++i) {
+                                const ob::State* robot_state = robot_path->getState(i);
+                                if (!robot_state) break;
+                                const auto* se2 = robot_state->as<ob::SE2StateSpace::StateType>();
+                                YAML::Node state_node;
+                                state_node.push_back(se2->getX());
+                                state_node.push_back(se2->getY());
+                                state_node.push_back(se2->getYaw());
+                                states_node.push_back(state_node);
+                            }
+                            robot_data["states"] = states_node;
+                        }
+                        result.push_back(robot_data);
+                    }
+                    output["result"] = result;
+                }
             }
-            output["result"] = result;
-
-            std::cout << "Solution extracted successfully" << std::endl;
-        } // end else (all robots solved)
+        }
     }
 
-    // Write output file
+    // Cleanup
+    for (auto* co : obstacles) delete co;
+    for (int i = 0; i < num_robots; ++i) {
+        robot_sis[i]->freeState(start_states[i]);
+        robot_sis[i]->freeState(goal_states[i]);
+    }
+
+    return output;
+}
+
+
+// ----------------------------------------------------------------------------
+
+#ifdef DECOUPLED_RRT_MAIN
+int main(int argc, char** argv)
+{
+    std::string inputFile;
+    std::string outputFile;
+    std::string configFile;
+    DecoupledRRTConfig config;
+
+    po::options_description desc("Allowed options");
+    desc.add_options()
+        ("help,h", "Show help message")
+        ("input,i",  po::value<std::string>(&inputFile)->required(),  "Input YAML file")
+        ("output,o", po::value<std::string>(&outputFile)->required(), "Output YAML file")
+        ("cfg,c",    po::value<std::string>(&configFile),             "Configuration YAML file");
+
+    po::variables_map vm;
+    try {
+        po::store(po::parse_command_line(argc, argv, desc), vm);
+        if (vm.count("help")) { std::cout << desc << std::endl; return 0; }
+        po::notify(vm);
+    } catch (const po::error& e) {
+        std::cerr << "ERROR: " << e.what() << std::endl;
+        std::cout << desc << std::endl;
+        return 1;
+    }
+
+    if (vm.count("cfg")) {
+        try {
+            YAML::Node cfg = YAML::LoadFile(configFile);
+            if (cfg["goal_threshold"]) config.goal_threshold = cfg["goal_threshold"].as<double>();
+            if (cfg["seed"])           config.seed           = cfg["seed"].as<int>();
+            if (cfg["timelimit"])      config.time_limit     = cfg["timelimit"].as<double>();
+        } catch (const YAML::Exception& e) {
+            std::cerr << "ERROR loading config file: " << e.what() << std::endl;
+            return 1;
+        }
+    }
+
+    YAML::Node env;
+    try {
+        env = YAML::LoadFile(inputFile);
+    } catch (const YAML::Exception& e) {
+        std::cerr << "ERROR loading YAML file: " << e.what() << std::endl;
+        return 1;
+    }
+
+    YAML::Node output = DecoupledRRTPlanner(config).plan(env);
+
     try {
         std::ofstream fout(outputFile);
         fout << output;
-        fout.close();
-        std::cout << "Output written to " << outputFile << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "ERROR writing output file: " << e.what() << std::endl;
         return 1;
     }
 
-    // Cleanup
-    for (auto* co : obstacles) {
-        delete co;
-    }
-
-    for (size_t i = 0; i < start_states.size(); ++i) {
-        robot_sis[i]->freeState(start_states[i]);
-    }
-
-    for (size_t i = 0; i < goal_states.size(); ++i) {
-        robot_sis[i]->freeState(goal_states[i]);
-    }
-
-    std::cout << "Done!" << std::endl;
     return 0;
 }
+#endif // DECOUPLED_RRT_MAIN

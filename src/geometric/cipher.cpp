@@ -375,6 +375,33 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
         result.failure_reason = std::string("exception: ") + e.what();
     }
 
+    if (!result.success && !isTimeoutExceeded()) {
+        std::cerr << "[Fallback] CIPHER failed; trying decoupled RRT..." << std::endl;
+        std::vector<size_t> all_robot_indices;
+        for (size_t i = 0; i < robots_.size(); ++i) all_robot_indices.push_back(i);
+
+        GeometricPlanningResult dec_result =
+            useDecoupledPlanner(all_robot_indices, starts_, goals_, env_min_, env_max_);
+
+        if (dec_result.solved) {
+            DOUT << "[Fallback] Decoupled RRT succeeded" << std::endl;
+            result.success = true;
+            result.failure_reason = "";
+        } else if (!isTimeoutExceeded()) {
+            std::cerr << "[Fallback] Decoupled RRT failed; trying coupled RRT..." << std::endl;
+            GeometricPlanningResult coup_result =
+                useCompositePlanner(all_robot_indices, starts_, goals_, env_min_, env_max_);
+            result.success = coup_result.solved;
+            if (result.success) {
+                DOUT << "[Fallback] Coupled RRT succeeded" << std::endl;
+                result.failure_reason = "";
+            } else {
+                std::cerr << "[Fallback] All fallbacks failed" << std::endl;
+                result.failure_reason = "all_fallbacks_failed";
+            }
+        }
+    }
+
     result.planning_time = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - planning_start_time_).count();
     result.resolution_stats = resolution_stats_;
@@ -1199,6 +1226,104 @@ GeometricPlanningResult CipherGeometricPlanner::useCompositePlanner(
     return result;
 }
 
+GeometricPlanningResult CipherGeometricPlanner::useDecoupledPlanner(
+    const std::vector<size_t>& robot_indices,
+    const std::vector<std::vector<double>>& subproblem_starts,
+    const std::vector<std::vector<double>>& subproblem_goals,
+    const std::vector<double>& subproblem_env_min,
+    const std::vector<double>& subproblem_env_max) {
+    DOUT << "Using decoupled planner for " << robot_indices.size() << " robots..." << std::endl;
+
+    GeometricPlanningResult result;
+    result.solved = false;
+    result.planning_time = 0.0;
+
+    // Build the YAML environment node (same schema as useCompositePlanner)
+    YAML::Node env_yaml;
+
+    YAML::Node env_min_node, env_max_node;
+    for (double v : subproblem_env_min) env_min_node.push_back(v);
+    for (double v : subproblem_env_max) env_max_node.push_back(v);
+    env_yaml["environment"]["min"] = env_min_node;
+    env_yaml["environment"]["max"] = env_max_node;
+
+    YAML::Node obs_list;
+    for (const auto* co : obstacles_) {
+        const auto* box = dynamic_cast<const fcl::Boxf*>(co->getCollisionGeometry());
+        if (!box) continue;
+
+        YAML::Node obs;
+        obs["type"] = "box";
+
+        YAML::Node size_node;
+        size_node.push_back(static_cast<double>(box->side[0]));
+        size_node.push_back(static_cast<double>(box->side[1]));
+        obs["size"] = size_node;
+
+        YAML::Node center_node;
+        center_node.push_back(static_cast<double>(co->getTranslation()[0]));
+        center_node.push_back(static_cast<double>(co->getTranslation()[1]));
+        obs["center"] = center_node;
+
+        obs_list.push_back(obs);
+    }
+    env_yaml["environment"]["obstacles"] = obs_list;
+
+    YAML::Node robots_node;
+    for (size_t i = 0; i < robot_indices.size(); ++i) {
+        size_t r = robot_indices[i];
+        YAML::Node robot_node;
+        robot_node["type"] = robot_types_[r];
+
+        YAML::Node start_node;
+        for (double v : subproblem_starts[i]) start_node.push_back(v);
+        robot_node["start"] = start_node;
+
+        YAML::Node goal_node;
+        for (double v : subproblem_goals[i]) goal_node.push_back(v);
+        robot_node["goal"] = goal_node;
+
+        robots_node.push_back(robot_node);
+    }
+    env_yaml["robots"] = robots_node;
+
+    DecoupledRRTConfig rrt_config;
+    rrt_config.time_limit     = config_.planning_time_limit;
+    rrt_config.goal_threshold = config_.goal_threshold;
+    rrt_config.seed           = config_.seed;
+
+    DecoupledRRTPlanner decoupled_planner(rrt_config);
+    YAML::Node output = decoupled_planner.plan(env_yaml);
+
+    result.solved        = output["solved"].as<bool>();
+    result.planning_time = output["planning_time"].as<double>();
+
+    if (!result.solved || !output["result"]) {
+        return result;
+    }
+
+    const auto& yaml_result = output["result"];
+    for (size_t i = 0; i < robot_indices.size(); ++i) {
+        size_t r = robot_indices[i];
+        auto si = robots_[r]->getSpaceInformation();
+        auto path = std::make_shared<og::PathGeometric>(si);
+
+        for (const auto& state_node : yaml_result[i]["states"]) {
+            std::vector<double> reals;
+            for (const auto& v : state_node) reals.push_back(v.as<double>());
+
+            ob::State* s = si->getStateSpace()->allocState();
+            si->getStateSpace()->copyFromReals(s, reals);
+            path->append(s);
+            si->getStateSpace()->freeState(s);
+        }
+
+        result.individual_paths.push_back(path);
+    }
+
+    return result;
+}
+
 bool CipherGeometricPlanner::resolveConflictWithStrategies(const SegmentConflict& conflict,
                                                             ConflictResolutionEntry& log_entry) {
     DOUT << "Resolving conflict with strategies..." << std::endl;
@@ -1491,11 +1616,6 @@ bool CipherGeometricPlanner::refineExpandedRegion(
     DOUT << "        " << new_regions.size() << " new cell(s) to refine out of "
               << expanded_regions.size() << " total" << std::endl;
 
-    // Capture viz IDs of cells-to-remove BEFORE they are erased from region_viz_id_.
-    std::vector<std::string> removed_viz_ids;
-    for (int r : new_regions)
-        removed_viz_ids.push_back(region_viz_id_.count(r) ? region_viz_id_[r] : "c" + std::to_string(r));
-
     // Step 1: Refine the leaf cells in the global decomposition.
     for (int r : new_regions) {
         if (decomp_->getDecompositionDepth(r) >= max_levels)
@@ -1504,9 +1624,17 @@ bool CipherGeometricPlanner::refineExpandedRegion(
     }
     DOUT << "        Decomposed " << new_regions.size() << " cell(s) in global decomposition" << std::endl;
 
+    // Capture viz IDs only for cells that were actually decomposed (max-depth cells are skipped).
+    std::vector<std::string> removed_viz_ids;
+    for (int r : new_regions)
+        if (grid_decomp->hasDecomposed(r))
+            removed_viz_ids.push_back(region_viz_id_.count(r) ? region_viz_id_[r] : "c" + std::to_string(r));
+
     // Mark new cells as refined and register their children's viz IDs.
     for (int r : new_regions) {
         region_refinement_level_[r] = {expansion_layer, refinement_level};
+        if (!grid_decomp->hasDecomposed(r))
+            continue;
         std::string parent_viz_id = region_viz_id_.count(r) ? region_viz_id_[r] : "c" + std::to_string(r);
         region_viz_id_.erase(r);
         for (int child : grid_decomp->getChildRegions(r)) {
@@ -1529,9 +1657,10 @@ bool CipherGeometricPlanner::refineExpandedRegion(
     if (do_viz_) {
         std::vector<std::tuple<std::string, std::vector<double>, std::vector<double>>> new_cells;
         for (int r : new_regions) {
+            if (!grid_decomp->hasDecomposed(r))
+                continue;
             for (int child : grid_decomp->getChildRegions(r)) {
                 auto cb = decomp_->getCellBounds(child);
-                // region_viz_id_[child] was set in the marking step above
                 new_cells.emplace_back(region_viz_id_[child],
                     std::vector<double>(cb.low.begin(), cb.low.end()),
                     std::vector<double>(cb.high.begin(), cb.high.end()));

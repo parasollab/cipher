@@ -1333,11 +1333,6 @@ bool CipherKinoPlanner::refineExpandedRegion(
     DOUT << "        " << new_regions.size() << " new cell(s) to refine out of "
               << expanded_regions.size() << " total" << std::endl;
 
-    // Capture viz IDs of cells-to-remove BEFORE they are erased from region_viz_id_.
-    std::vector<std::string> removed_viz_ids;
-    for (int r : new_regions)
-        removed_viz_ids.push_back(region_viz_id_.count(r) ? region_viz_id_[r] : "c" + std::to_string(r));
-
     // Step 1: Refine the leaf cells in the global decomposition.
     for (int r : new_regions) {
         if (decomp_->getDecompositionDepth(r) >= max_levels)
@@ -1347,9 +1342,17 @@ bool CipherKinoPlanner::refineExpandedRegion(
 
     DOUT << "        Decomposed " << new_regions.size() << " cell(s) in global decomposition" << std::endl;
 
+    // Capture viz IDs only for cells that were actually decomposed (max-depth cells are skipped).
+    std::vector<std::string> removed_viz_ids;
+    for (int r : new_regions)
+        if (grid_decomp->hasDecomposed(r))
+            removed_viz_ids.push_back(region_viz_id_.count(r) ? region_viz_id_[r] : "c" + std::to_string(r));
+
     // Mark new cells as refined and register their children's viz IDs.
     for (int r : new_regions) {
         region_refinement_level_[r] = {expansion_layer, refinement_level};
+        if (!grid_decomp->hasDecomposed(r))
+            continue;
         std::string parent_viz_id = region_viz_id_.count(r) ? region_viz_id_[r] : "c" + std::to_string(r);
         region_viz_id_.erase(r);
         for (int child : grid_decomp->getChildRegions(r)) {
@@ -1372,9 +1375,10 @@ bool CipherKinoPlanner::refineExpandedRegion(
     if (do_viz_) {
         std::vector<std::tuple<std::string, std::vector<double>, std::vector<double>>> new_cells;
         for (int r : new_regions) {
+            if (!grid_decomp->hasDecomposed(r))
+                continue;
             for (int child : grid_decomp->getChildRegions(r)) {
                 auto cb = decomp_->getCellBounds(child);
-                // region_viz_id_[child] was set in the marking step above
                 new_cells.emplace_back(region_viz_id_[child],
                     std::vector<double>(cb.low.begin(), cb.low.end()),
                     std::vector<double>(cb.high.begin(), cb.high.end()));
