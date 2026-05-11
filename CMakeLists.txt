@@ -32,6 +32,7 @@ include_directories(
 add_executable(geometric_cipher
   src/geometric/cipher.cpp
   src/geometric/coupled_rrt.cpp
+  src/geometric/decoupled_rrt.cpp
   src/utils/grid_decomposition.cpp
   src/mapf/cbs.cpp
   db-CBS/src/robots.cpp
@@ -58,6 +59,7 @@ add_executable(geometric_decoupled_rrt
   src/geometric/decoupled_rrt.cpp
   db-CBS/src/robots.cpp
 )
+target_compile_definitions(geometric_decoupled_rrt PRIVATE DECOUPLED_RRT_MAIN)
 target_include_directories(geometric_decoupled_rrt PRIVATE
   ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
   ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
