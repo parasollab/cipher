@@ -1304,6 +1304,7 @@ bool CipherKinoPlanner::refineExpandedRegion(
     // We always descend to leaves so that higher refinement levels subdivide children
     // of previously-refined cells rather than re-decomposing already-split parents.
     auto grid_decomp = std::static_pointer_cast<GridDecompositionImpl>(decomp_);
+    int max_levels = config_.conflict_resolution_config.max_refinement_levels;
 
     std::function<void(int, std::vector<int>&)> collectLeaves = [&](int rid, std::vector<int>& out) {
         if (!grid_decomp->hasDecomposed(rid)) { out.push_back(rid); return; }
@@ -1315,6 +1316,8 @@ bool CipherKinoPlanner::refineExpandedRegion(
         std::vector<int> leaves;
         collectLeaves(r, leaves);
         for (int leaf : leaves) {
+            if (decomp_->getDecompositionDepth(leaf) >= max_levels)
+                continue;
             auto it = region_refinement_level_.find(leaf);
             if (it == region_refinement_level_.end() ||
                 (it->second.first == expansion_layer && it->second.second < refinement_level))
