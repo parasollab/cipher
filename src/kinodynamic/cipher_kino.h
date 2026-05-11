@@ -219,13 +219,13 @@ struct ConflictResolutionEntry {
 
 struct ResolutionStats {
     // Counts of how many times each strategy was attempted
-    int decomposition_refinement_attempts = 0;
-    int subproblem_expansion_attempts = 0;
+    int decomposition_refinement_attempts = 0;  // outer-loop iterations (any expansion layer)
+    int expansion_attempts = 0;                 // subset where expansion_layer > 0
     int composite_planner_attempts = 0;
 
     // Counts of how many times each strategy successfully resolved a conflict
     int decomposition_refinement_successes = 0;
-    int subproblem_expansion_successes = 0;
+    int expansion_successes = 0;
     int composite_planner_successes = 0;
 
     // Total conflicts encountered and resolved

@@ -10,3 +10,5 @@ max_blocked_edge_retries: 5
 max_no_progress_iters: 20
 restrict_sampling_to_cell: false
 cbs_timeout: 5.0
+check_transition_feasibility: true
+transition_feasibility_robot_size_multiplier: 1.2

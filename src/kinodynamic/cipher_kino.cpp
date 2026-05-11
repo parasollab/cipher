@@ -1234,6 +1234,8 @@ bool CipherKinoPlanner::attemptRefinementAtExpansionLevel(
 {
     DOUT << "Attempting refinement at expansion level..." << std::endl;
     resolution_stats_.decomposition_refinement_attempts++;
+    if (expansion_layer > 0)
+        resolution_stats_.expansion_attempts++;
 
     for (int refinement_level = 1; refinement_level <= max_refinement_levels; ++refinement_level) {
         // Check for timeout before each refinement attempt
@@ -1263,6 +1265,8 @@ bool CipherKinoPlanner::attemptRefinementAtExpansionLevel(
                 attempt.conflict_resolved = true;
                 log_entry.attempts.push_back(attempt);
                 resolution_stats_.decomposition_refinement_successes++;
+                if (expansion_layer > 0)
+                    resolution_stats_.expansion_successes++;
                 return true;
             }
 
@@ -2691,6 +2695,20 @@ int main(int argc, char** argv)
     output["planning_time"] = result.planning_time;
     if (!result.failure_reason.empty())
         output["failure_reason"] = result.failure_reason;
+
+    {
+        const auto& s = result.resolution_stats;
+        YAML::Node stats;
+        stats["total_conflicts_encountered"]         = s.total_conflicts_encountered;
+        stats["total_conflicts_resolved"]            = s.total_conflicts_resolved;
+        stats["decomposition_refinement_attempts"]   = s.decomposition_refinement_attempts;
+        stats["decomposition_refinement_successes"]  = s.decomposition_refinement_successes;
+        stats["expansion_attempts"]                  = s.expansion_attempts;
+        stats["expansion_successes"]                 = s.expansion_successes;
+        stats["composite_planner_attempts"]          = s.composite_planner_attempts;
+        stats["composite_planner_successes"]         = s.composite_planner_successes;
+        output["resolution_stats"] = stats;
+    }
 
     if (result.success) {
         const auto& guided_paths = planner.getGuidedPaths();

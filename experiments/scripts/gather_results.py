@@ -89,7 +89,7 @@ def main():
     parser = argparse.ArgumentParser(description="Regenerate a summary CSV from existing result YAML files.")
     parser.add_argument('--scenarios', nargs='+', required=True, help="Scenario names")
     parser.add_argument('--methods', nargs='+', required=True, help="Method names")
-    parser.add_argument('--robots', nargs='+', type=int, default=[2, 4, 8, 16], help="Robot counts (default: 2 4 8 16)")
+    parser.add_argument('--robots', nargs='+', type=int, default=None, help="Robot counts (default: all that exist in results)")
     parser.add_argument('--seeds', type=int, default=10, help="Number of seeds per configuration (default: 10)")
     parser.add_argument('--output', required=True, help="Output CSV filename (written to experiments/results/)")
     parser.add_argument('--timeout', type=float, default=600.0, help="Timeout used during runs, for timed_out inference (default: 600)")
@@ -97,12 +97,28 @@ def main():
     args = parser.parse_args()
 
     script_dir = Path(__file__).parent
-    output_file = script_dir.parent / 'results' / args.output
+    results_dir = script_dir.parent / 'results'
+    output_file = results_dir / args.output
+
+    if args.robots is None:
+        robot_set = set()
+        for scenario in args.scenarios:
+            for method in args.methods:
+                method_dir = results_dir / scenario / method
+                if method_dir.is_dir():
+                    for d in method_dir.iterdir():
+                        if d.is_dir() and d.name.isdigit():
+                            robot_set.add(int(d.name))
+        robots = sorted(robot_set)
+        if not robots:
+            parser.error("No robot count directories found; specify --robots explicitly.")
+    else:
+        robots = args.robots
 
     gather_results(
         scenarios=args.scenarios,
         methods=args.methods,
-        robots=args.robots,
+        robots=robots,
         seeds=args.seeds,
         output_file=output_file,
         timeout=args.timeout,

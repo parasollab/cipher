@@ -27,7 +27,8 @@ CONFIGS = [
         'summary_file': 'summary.csv',
         'scenarios': [
             'open', 'rooms',
-            'low_clutter', 'medium_clutter', 'high_clutter',
+            'low_clutter', 'medium_clutter', 'high_clutter', 
+            'open_70x70'
         ],
         'methods': ['coupled_rrt', 'decoupled_rrt', 'srrt', 'drrt', 'arc', 'geometric_cipher'],
     },
@@ -49,7 +50,7 @@ CONFIGS = [
 
 def _draw_time(df, scenario, methods, num_robots, ax):
     robot_mask = df['robots'].isin(num_robots) if num_robots is not None else True
-    df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & robot_mask & (df['planning_time'] < 600)].copy()
+    df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & robot_mask & (df['solved'] == True)].copy()
     df_filtered = df_filtered[~((df_filtered['method'] == 'srrt') & (df_filtered['planning_time'] >= 480))]
     df_filtered['planning_time'] = df_filtered['planning_time'].replace(0, 1e-4)
     df_filtered['method'] = df_filtered['method'].map(lambda m: name_map.get(m, m))

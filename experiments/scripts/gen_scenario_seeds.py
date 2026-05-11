@@ -76,6 +76,51 @@ def _build_state(robot_type, x, y, theta):
         raise ValueError(f"Unknown state format for robot type '{robot_type}'")
 
 
+def _point_to_box_dist(px, py, cx, cy, sx, sy):
+    dx = max(abs(px - cx) - sx / 2, 0.0)
+    dy = max(abs(py - cy) - sy / 2, 0.0)
+    return np.sqrt(dx * dx + dy * dy)
+
+
+def _min_obs_dist(px, py, obstacles):
+    if not obstacles:
+        return np.inf
+    return min(
+        _point_to_box_dist(px, py, o['center'][0], o['center'][1], o['size'][0], o['size'][1])
+        for o in obstacles
+    )
+
+
+def _ccw(ax, ay, bx, by, cx, cy):
+    return (cy - ay) * (bx - ax) > (by - ay) * (cx - ax)
+
+
+def _segments_intersect(ax, ay, bx, by, cx, cy, dx, dy):
+    return (
+        _ccw(ax, ay, cx, cy, dx, dy) != _ccw(bx, by, cx, cy, dx, dy) and
+        _ccw(ax, ay, bx, by, cx, cy) != _ccw(ax, ay, bx, by, dx, dy)
+    )
+
+
+def _crossing_fraction(starts, goals):
+    n = len(starts)
+    n_pairs = n * (n - 1) // 2
+    if n_pairs == 0:
+        return 0.0
+    crossings = sum(
+        _segments_intersect(
+            starts[i][0], starts[i][1], goals[i][0], goals[i][1],
+            starts[j][0], starts[j][1], goals[j][0], goals[j][1],
+        )
+        for i in range(n) for j in range(i + 1, n)
+    )
+    return crossings / n_pairs
+
+
+def _cell(x, y, cell_size):
+    return (int(x / cell_size), int(y / cell_size))
+
+
 def _sample(rng, env_min, env_max, margin):
     x = rng.uniform(env_min[0] + margin, env_max[0] - margin)
     y = rng.uniform(env_min[1] + margin, env_max[1] - margin)
@@ -83,7 +128,7 @@ def _sample(rng, env_min, env_max, margin):
     return x, y, theta
 
 
-def _generate(robots, obstacles, env_min, env_max, min_robot_dist, min_sg_dist, max_attempts, rng, models_dir):
+def _generate(robots, obstacles, env_min, env_max, min_robot_dist, min_sg_dist, max_attempts, rng, models_dir, min_obs_clearance=0.0, min_cross_dist=0.0, min_boundary_margin=0.0, cell_size=5.0):
     geometries = [
         (lambda g: (g[0], g[1], g[2], _bounding_radius(*g)))(_load_geometry(r['type'], models_dir))
         for r in robots
@@ -98,7 +143,16 @@ def _generate(robots, obstacles, env_min, env_max, min_robot_dist, min_sg_dist, 
             x, y, theta = _sample(rng, env_min, env_max, margin)
             if _collides(x, y, theta, shape, radius, size, obstacles):
                 continue
+            if (x < env_min[0] + min_boundary_margin or x > env_max[0] - min_boundary_margin or
+                    y < env_min[1] + min_boundary_margin or y > env_max[1] - min_boundary_margin):
+                continue
+            if _min_obs_dist(x, y, obstacles) < min_obs_clearance:
+                continue
             if any(np.hypot(x - sx, y - sy) < min_robot_dist for sx, sy, _ in starts):
+                continue
+            if any(np.hypot(x - gx, y - gy) < min_cross_dist for gx, gy, _ in goals):
+                continue
+            if any(_cell(x, y, cell_size) == _cell(gx, gy, cell_size) for gx, gy, _ in goals):
                 continue
             starts.append((x, y, theta))
             break
@@ -110,9 +164,18 @@ def _generate(robots, obstacles, env_min, env_max, min_robot_dist, min_sg_dist, 
             x, y, theta = _sample(rng, env_min, env_max, margin)
             if _collides(x, y, theta, shape, radius, size, obstacles):
                 continue
+            if (x < env_min[0] + min_boundary_margin or x > env_max[0] - min_boundary_margin or
+                    y < env_min[1] + min_boundary_margin or y > env_max[1] - min_boundary_margin):
+                continue
+            if _min_obs_dist(x, y, obstacles) < min_obs_clearance:
+                continue
             if np.hypot(x - sx0, y - sy0) < min_sg_dist:
                 continue
             if any(np.hypot(x - gx, y - gy) < min_robot_dist for gx, gy, _ in goals):
+                continue
+            if any(np.hypot(x - sx, y - sy) < min_cross_dist for sx, sy, _ in starts[:-1]):
+                continue
+            if any(_cell(x, y, cell_size) == _cell(sx, sy, cell_size) for sx, sy, _ in starts[:-1]):
                 continue
             goals.append((x, y, theta))
             break
@@ -147,7 +210,7 @@ def _find_env_base(scenario_dir, scenario):
     return candidates[0] if candidates else None
 
 
-def gen_seed_file(base_cfg, n_robots, seed, models_dir, min_robot_dist, min_sg_dist, max_attempts, robot_types_arg=None):
+def gen_seed_file(base_cfg, n_robots, seed, models_dir, min_robot_dist, min_sg_dist, max_attempts, robot_types_arg=None, min_obs_clearance=0.0, min_cross_dist=0.0, max_crossing_fraction=1.0, max_global_attempts=100, min_boundary_margin=2.0, cell_size=5.0):
     env = base_cfg['environment']
     obstacles = env.get('obstacles', [])
     rng = np.random.default_rng(seed)
@@ -155,12 +218,22 @@ def gen_seed_file(base_cfg, n_robots, seed, models_dir, min_robot_dist, min_sg_d
     types = _pick_types(n_robots, base_cfg.get('robots', []), robot_types_arg, rng)
     robots = [{'type': t} for t in types]
 
-    starts, goals = _generate(
-        robots, obstacles,
-        env['min'], env['max'],
-        min_robot_dist, min_sg_dist, max_attempts,
-        rng, models_dir,
-    )
+    for _ in range(max_global_attempts):
+        starts, goals = _generate(
+            robots, obstacles,
+            env['min'], env['max'],
+            min_robot_dist, min_sg_dist, max_attempts,
+            rng, models_dir,
+            min_obs_clearance=min_obs_clearance,
+            min_cross_dist=min_cross_dist,
+            min_boundary_margin=min_boundary_margin,
+            cell_size=cell_size,
+        )
+        if _crossing_fraction(starts, goals) <= max_crossing_fraction:
+            break
+    else:
+        print(f"  Warning: seed {seed} ({n_robots} robots) could not meet crossing fraction cap "
+              f"after {max_global_attempts} attempts; using last result")
 
     new_cfg = copy.deepcopy(base_cfg)
     new_cfg['robots'] = [
@@ -187,8 +260,18 @@ def main():
                         help="Robot type(s) to use. One type: all robots use it. "
                              "Multiple types: each robot is randomly assigned one. "
                              "Default: preserve types from base yaml.")
-    parser.add_argument('--min-robot-dist', type=float, default=1.5,
-                        help="Minimum distance between any two robot positions (default: 1.5)")
+    parser.add_argument('--min-robot-dist', type=float, default=3.0,
+                        help="Minimum distance between any two robot positions (default: 3.0)")
+    parser.add_argument('--min-obs-clearance', type=float, default=1.0,
+                        help="Minimum distance from robot center to nearest obstacle surface (default: 1.0)")
+    parser.add_argument('--min-cross-dist', type=float, default=2.0,
+                        help="Minimum distance between any start and any other robot's goal (default: 2.0)")
+    parser.add_argument('--max-crossing-fraction', type=float, default=0.35,
+                        help="Reject seeds where more than this fraction of path pairs cross (default: 0.35)")
+    parser.add_argument('--min-boundary-margin', type=float, default=2.0,
+                        help="Minimum distance from robot center to environment boundary (default: 2.0)")
+    parser.add_argument('--cell-size', type=float, default=5.0,
+                        help="Planner grid cell size used for cross-cell checks (default: 5.0)")
     parser.add_argument('--min-sg-dist', type=float, default=3.0,
                         help="Minimum distance between a robot's start and goal (default: 3.0)")
     parser.add_argument('--max-attempts', type=int, default=10000,
@@ -221,6 +304,11 @@ def main():
                     base_cfg, n, seed, models_dir,
                     args.min_robot_dist, args.min_sg_dist, args.max_attempts,
                     robot_types_arg=args.robot_types,
+                    min_obs_clearance=args.min_obs_clearance,
+                    min_cross_dist=args.min_cross_dist,
+                    max_crossing_fraction=args.max_crossing_fraction,
+                    min_boundary_margin=args.min_boundary_margin,
+                    cell_size=args.cell_size,
                 )
                 with open(out_path, 'w') as f:
                     yaml.dump(new_cfg, f, default_flow_style=None)

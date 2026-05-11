@@ -1,0 +1,26 @@
+environment:
+  max: [70.0, 70.0]
+  min: [0.0, 0.0]
+  obstacles:
+  - center: [30.8, 30.8]
+    size: [16.8, 16.8]
+    type: box
+  - center: [11.2, 53.2]
+    size: [16.8, 16.8]
+    type: box
+  - center: [53.2, 16.8]
+    size: [16.8, 16.8]
+    type: box
+  - center: [42.0, 56.0]
+    size: [16.8, 16.8]
+    type: box
+  - center: [22.4, 8.4]
+    size: [16.8, 16.8]
+    type: box
+robots:
+- goal: [66.2827196514882, 64.98727993935482, -0.05457680170103352]
+  start: [65.60577487465376, 49.83025676100056, 1.3973084185714173]
+  type: unicycle_first_order_0_sphere
+- goal: [42.350957067829974, 41.459449208444646, -0.12280899661209466]
+  start: [59.3602132775904, 66.65020239080337, -0.5231881293861624]
+  type: unicycle_first_order_0_sphere
