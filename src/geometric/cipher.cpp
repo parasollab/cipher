@@ -198,6 +198,16 @@ bool CipherGeometricPlanner::isTimeoutExceeded() const {
     return elapsed >= config_.max_total_time;
 }
 
+double CipherGeometricPlanner::remainingTime() const {
+    if (config_.max_total_time > 0.0) {
+        auto now = std::chrono::steady_clock::now();
+        double elapsed = std::chrono::duration<double>(now - planning_start_time_).count();
+        double remaining = config_.max_total_time - elapsed;
+        return std::max(0.0, std::min(remaining, config_.planning_time_limit));
+    }
+    return config_.planning_time_limit;
+}
+
 void CipherGeometricPlanner::loadProblem(
         const std::vector<std::string>& robot_types,
         const std::vector<std::vector<double>>& starts,
@@ -1173,7 +1183,7 @@ GeometricPlanningResult CipherGeometricPlanner::useCompositePlanner(
 
     // Configure and run the coupled RRT planner
     CoupledRRTConfig rrt_config;
-    rrt_config.time_limit     = config_.planning_time_limit;
+    rrt_config.time_limit     = remainingTime();
     rrt_config.goal_threshold = config_.goal_threshold;
     rrt_config.seed           = config_.seed;
 
@@ -1272,8 +1282,9 @@ GeometricPlanningResult CipherGeometricPlanner::useDecoupledPlanner(
     env_yaml["robots"] = robots_node;
 
     DecoupledRRTConfig rrt_config;
-    rrt_config.time_limit     = config_.planning_time_limit;
+    rrt_config.time_limit     = remainingTime();
     rrt_config.goal_threshold = config_.goal_threshold;
+    rrt_config.goal_bias      = config_.goal_bias;
     rrt_config.seed           = config_.seed;
 
     DecoupledRRTPlanner decoupled_planner(rrt_config);
@@ -2723,6 +2734,10 @@ int main(int argc, char** argv)
                 config.max_no_progress_iters = cfg["max_no_progress_iters"].as<int>();
             if (cfg["restrict_sampling_to_cell"])
                 config.restrict_sampling_to_cell = cfg["restrict_sampling_to_cell"].as<bool>();
+            if (cfg["goal_threshold"])
+                config.goal_threshold = cfg["goal_threshold"].as<double>();
+            if (cfg["goal_bias"])
+                config.goal_bias = cfg["goal_bias"].as<double>();
             if (cfg["check_transition_feasibility"])
                 config.check_transition_feasibility = cfg["check_transition_feasibility"].as<bool>();
             if (cfg["transition_feasibility_robot_size_multiplier"])

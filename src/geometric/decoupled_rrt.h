@@ -6,6 +6,7 @@
 struct DecoupledRRTConfig {
     double time_limit     = 60.0;
     double goal_threshold = 0.5;
+    double goal_bias      = 0.05;
     int    seed           = -1;
 };
 

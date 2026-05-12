@@ -93,6 +93,7 @@ struct CipherGeometricConfig {
     double max_total_time = 0.0;  // Maximum total planning time in seconds (0 = no limit)
     int seed = -1;  // Random seed (-1 for random)
     double goal_threshold = 0.5;  // Distance threshold for goal satisfaction
+    double goal_bias      = 0.05; // Probability of sampling goal in fallback RRT planners
     double robot_cell_size_ratio = 1.8;
 
     // Sampling space: when true, inset cell bounds by robot circumradius so the robot body
@@ -330,6 +331,7 @@ private:
     // Timeout tracking
     std::chrono::steady_clock::time_point planning_start_time_;
     bool isTimeoutExceeded() const;
+    double remainingTime() const;  // seconds remaining in global budget (or planning_time_limit if no budget)
 
     // Collision manager for obstacles (shared with guided planners)
     std::shared_ptr<fcl::BroadPhaseCollisionManagerf> collision_manager_;

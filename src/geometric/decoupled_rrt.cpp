@@ -147,10 +147,6 @@ private:
 };
 
 
-static ob::PlannerPtr plannerAllocator(const ob::SpaceInformationPtr& si)
-{
-    return std::make_shared<og::RRT>(si);
-}
 
 
 static bool statesOverlap(
@@ -311,7 +307,12 @@ YAML::Node DecoupledRRTPlanner::plan(const YAML::Node& env)
 
     ma_si->lock();
     ma_pdef->lock();
-    ma_si->setPlannerAllocator(plannerAllocator);
+    double goal_bias = config_.goal_bias;
+    ma_si->setPlannerAllocator([goal_bias](const ob::SpaceInformationPtr& si) -> ob::PlannerPtr {
+        auto rrt = std::make_shared<og::RRT>(si);
+        rrt->setGoalBias(goal_bias);
+        return rrt;
+    });
 
     auto planner = std::make_shared<omrg::PP>(ma_si);
     planner->setProblemDefinition(ma_pdef);
