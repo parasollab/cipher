@@ -65,11 +65,11 @@ def _collides(px, py, theta, shape, radius, size, obstacles):
     return False
 
 
-def _build_state(robot_type, x, y, theta):
+def _build_state(robot_type, x, y):
     if robot_type in ('unicycle_first_order_0_sphere', 'unicycle_first_order_0', 'car_first_order_0'):
-        return [x, y, theta]
+        return [x, y, 0.0]
     elif robot_type == 'unicycle_second_order_0':
-        return [x, y, theta, 0.0]
+        return [x, y, 0.0, 0.0]
     elif robot_type == 'double_integrator_0':
         return [x, y, 0.0, 0.0]
     else:
@@ -239,8 +239,8 @@ def gen_seed_file(base_cfg, n_robots, seed, models_dir, min_robot_dist, min_sg_d
     new_cfg['robots'] = [
         {
             'type': types[i],
-            'start': _build_state(types[i], *starts[i]),
-            'goal': _build_state(types[i], *goals[i]),
+            'start': _build_state(types[i], starts[i][0], starts[i][1]),
+            'goal': _build_state(types[i], goals[i][0], goals[i][1]),
         }
         for i in range(n_robots)
     ]
