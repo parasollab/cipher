@@ -951,6 +951,14 @@ void guided_dbrrtConnect(const dynobench::Problem &problem,
   std::for_each(
       info_out.trajs_raw.begin(), info_out.trajs_raw.end(),
       [&](auto &traj) { traj.cost = robot->ref_dt * traj.actions.size(); });
+
+  for (auto* n : nodes_in_Tn)    delete n;
+  for (auto* n : nodes_in_Tnrev) delete n;
+  delete rand_node;
+  delete T_m;
+  delete T_mrev;
+  delete T_n;
+  delete T_nrev;
 }
 
 template <typename Iter, typename RandomGenerator>
@@ -1315,13 +1323,7 @@ void guided_dbrrt(const dynobench::Problem &problem,
       if (options_dbrrt.ao_rrt &&
           new_node->gScore + new_node->hScore >
               options_dbrrt.best_cost_prune_factor * cost_bound) {
-        // std::cout << "warning:
-        // "
-        //           << "cost of
-        //           new is above
-        //           bound"
-        //           <<
-        //           std::endl;
+        delete new_node;
         continue;
       }
 
@@ -1797,6 +1799,13 @@ void guided_dbrrt(const dynobench::Problem &problem,
             [](const auto &a, const auto &b) { return a.cost < b.cost; })
             ->cost;
   }
+
+  for (auto* n : discovered_nodes) {
+    if (n != start_node.get()) delete n;
+  }
+  delete rand_node;
+  delete T_m;
+  delete T_n;
 }
 
 void guided_idbrrt(const dynobench::Problem &problem,
@@ -1936,7 +1945,9 @@ ob::State* eigen_to_ompl_state(const Eigen::Ref<const Eigen::VectorXd> x, std::s
 int locate_region(const Eigen::Ref<const Eigen::VectorXd> x, std::shared_ptr<Robot> ompl_robot, std::shared_ptr<DecompositionImpl> decomposition) {
   auto grid_decomp = static_cast<GridDecompositionImpl *>(decomposition.get());
   auto* state = eigen_to_ompl_state(x, ompl_robot);
-  return grid_decomp->locateSubRegion(state);
+  int result = grid_decomp->locateSubRegion(state);
+  ompl_robot->getSpaceInformation()->getStateSpace()->freeState(state);
+  return result;
 }
 
 bool check_trajectory_valid(dynobench::TrajWrapper traj_wrapper, std::shared_ptr<Robot> ompl_robot, std::shared_ptr<DecompositionImpl> decomposition, std::vector<int> region_path, int region_idx) {
@@ -1952,7 +1963,6 @@ bool check_trajectory_valid(dynobench::TrajWrapper traj_wrapper, std::shared_ptr
   // auto bounds1 = decomp->getCellBounds(region_path[region_idx]);
   // auto bounds2 = region_idx > 0 ? decomp->getCellBounds(region_path[region_idx - 1]) : bounds1;
   for (size_t i = 0; i < traj_wrapper.get_size(); i++) {
-    auto* state = eigen_to_ompl_state(traj_wrapper.get_state(i), ompl_robot);
     int rid = locate_region(traj_wrapper.get_state(i), ompl_robot, decomposition);
     // ompl_robot->getSpaceInformation()->getStateSpace()->printState(state, std::cout);
     // std::cout << " valid regions: " << region_path[region_idx] << " and " << (region_idx > 0 ? region_path[region_idx - 1] : -1) << " state region: " << rid << std::endl;
