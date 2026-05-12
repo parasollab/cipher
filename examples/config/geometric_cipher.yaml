@@ -1,3 +1,4 @@
+# mapf_method: cbs   # "cbs" (default) or "astar" (independent A*, faster but ignores conflicts)
 timelimit: 600
 max_total_time: 0
 seed: -1

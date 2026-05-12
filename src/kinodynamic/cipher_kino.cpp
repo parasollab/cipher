@@ -260,7 +260,9 @@ CipherKinoResult CipherKinoPlanner::plan()
         KinoPlanningResult dec_result =
             useDecoupledPlanner(all_robot_indices, starts_, goals_, env_min_, env_max_);
 
+        resolution_stats_.decoupled_planner_attempts++;
         if (dec_result.solved) {
+            resolution_stats_.decoupled_planner_successes++;
             DOUT << "[Fallback] Decoupled kinodynamic RRT succeeded" << std::endl;
             robot_paths_.resize(robots_.size(), nullptr);
             for (size_t i = 0; i < robots_.size(); ++i) {
@@ -2826,6 +2828,8 @@ int main(int argc, char** argv)
         stats["expansion_successes"]                 = s.expansion_successes;
         stats["composite_planner_attempts"]          = s.composite_planner_attempts;
         stats["composite_planner_successes"]         = s.composite_planner_successes;
+        stats["decoupled_planner_attempts"]          = s.decoupled_planner_attempts;
+        stats["decoupled_planner_successes"]         = s.decoupled_planner_successes;
         output["resolution_stats"] = stats;
     }
 

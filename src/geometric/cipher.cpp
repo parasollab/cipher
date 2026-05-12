@@ -25,6 +25,7 @@ struct NullStream : std::ostream { NullStream() : std::ostream(&_buf) {} NullBuf
 #include "utils/grid_decomposition.h"
 #include "guided/guided_geometric_rrt.h"
 #include "mapf/cbs.h"
+#include "mapf/astar.h"
 
 namespace po = boost::program_options;
 
@@ -377,7 +378,9 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
         GeometricPlanningResult dec_result =
             useDecoupledPlanner(all_robot_indices, starts_, goals_, env_min_, env_max_);
 
+        resolution_stats_.decoupled_planner_attempts++;
         if (dec_result.solved) {
+            resolution_stats_.decoupled_planner_successes++;
             DOUT << "[Fallback] Decoupled RRT succeeded" << std::endl;
             result.success = true;
             result.failure_reason = "";
@@ -403,22 +406,35 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
 }
 
 void CipherGeometricPlanner::computeHighLevelPaths() {
-    DOUT << "Computing high-level paths..." << std::endl;
-    CBS cbs_solver(config_.mapf_config.region_capacity, config_.mapf_config.mapf_timeout,
-                    obstacles_, config_.mapf_config.max_obstacle_volume_percent);
+    const std::string& method = config_.mapf_config.method;
+    DOUT << "Computing high-level paths (method=" << method << ")..." << std::endl;
     ForbiddenEdgeSet all_forbidden = forbidden_edges_;
     all_forbidden.insert(structurally_forbidden_edges_.begin(), structurally_forbidden_edges_.end());
-    high_level_paths_ = cbs_solver.solve(decomp_, start_states_, goal_states_,
-                                         /*allowed_regions=*/{}, all_forbidden);
+
+    if (method == "astar") {
+        IndependentAStar astar_solver(config_.mapf_config.region_capacity,
+                                      config_.mapf_config.mapf_timeout,
+                                      obstacles_,
+                                      config_.mapf_config.max_obstacle_volume_percent);
+        high_level_paths_ = astar_solver.solve(decomp_, start_states_, goal_states_,
+                                               /*allowed_regions=*/{}, all_forbidden);
+    } else {
+        if (method != "cbs")
+            std::cerr << "Unknown mapf_method '" << method << "', defaulting to CBS." << std::endl;
+        CBS cbs_solver(config_.mapf_config.region_capacity, config_.mapf_config.mapf_timeout,
+                       obstacles_, config_.mapf_config.max_obstacle_volume_percent);
+        high_level_paths_ = cbs_solver.solve(decomp_, start_states_, goal_states_,
+                                             /*allowed_regions=*/{}, all_forbidden);
+    }
 
     if (static_cast<int>(high_level_paths_.size()) < start_states_.size()) {
-        std::cerr << "CBS failed to find paths for all robots." << std::endl;
+        std::cerr << method << " failed to find paths for all robots." << std::endl;
     }
     for (int r = 0; r < (int)start_states_.size(); ++r) {
         if (high_level_paths_[r].empty()) {
-            std::cerr << "CBS returned empty path for robot " << r << std::endl;
+            std::cerr << method << " returned empty path for robot " << r << std::endl;
         }
-        DOUT << "  Robot " << r << " CBS path: "
+        DOUT << "  Robot " << r << " " << method << " path: "
                   << high_level_paths_[r].size() << " regions" << std::endl;
     }
 
@@ -2759,6 +2775,8 @@ int main(int argc, char** argv)
             if (cfg["transition_feasibility_robot_size_multiplier"])
                 config.transition_feasibility_robot_size_multiplier =
                     cfg["transition_feasibility_robot_size_multiplier"].as<double>();
+            if (cfg["mapf_method"])
+                config.mapf_config.method = cfg["mapf_method"].as<std::string>();
         } catch (const YAML::Exception& e) {
             std::cerr << "ERROR loading config file: " << e.what() << std::endl;
             return 1;
@@ -2845,6 +2863,8 @@ int main(int argc, char** argv)
         stats["expansion_successes"]                 = s.expansion_successes;
         stats["composite_planner_attempts"]          = s.composite_planner_attempts;
         stats["composite_planner_successes"]         = s.composite_planner_successes;
+        stats["decoupled_planner_attempts"]          = s.decoupled_planner_attempts;
+        stats["decoupled_planner_successes"]         = s.decoupled_planner_successes;
         output["resolution_stats"] = stats;
     }
 
