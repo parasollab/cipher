@@ -12,7 +12,7 @@ restrict_sampling_to_cell: false
 cbs_timeout: 1.0
 goal_threshold: 1.0
 
-guided_planner_method: "guided_idbrrt"
-do_optimization: true
+guided_planner_method: "guided_dbrrt"
+do_optimization: false
 solver_id: 0
 region_bounds_weight: 100.0
