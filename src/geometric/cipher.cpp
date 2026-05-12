@@ -2348,28 +2348,44 @@ void CipherGeometricPlanner::integrateRefinedPaths(
 
             // Part 1: copy original up to and including the entry state
             size_t entry_state_idx = 0;
+            bool entry_found = false;
             for (size_t s = 0; s < original_path->getStateCount(); ++s) {
                 if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_entry_state) < 1e-3) {
                     DOUT << "!!Found Start!!" << std::endl;
                     entry_state_idx = s;
+                    entry_found = true;
                     break;
                 }
+            }
+            if (!entry_found) {
+                throw std::runtime_error(
+                    "integrateRefinedPaths: planning_entry_state not found in original path "
+                    "(robot " + std::to_string(robot_idx) + "). Likely floating-point drift "
+                    "from prior splices or state-pointer aliasing.");
             }
             for (size_t s = 0; s <= entry_state_idx; ++s)
                 spliced_path->append(original_path->getState(s));
 
-            // Part 2: all refined path states
-            for (size_t s = 0; s < result.path->getStateCount(); ++s)
+            // Part 2: refined path states (entry state already appended, skip it)
+            for (size_t s = 1; s < result.path->getStateCount(); ++s)
                 spliced_path->append(result.path->getState(s));
 
             // Part 3: original path after the exit state
             size_t exit_state_idx = original_path->getStateCount() - 1;
+            bool exit_found = false;
             for (size_t s = entry_state_idx; s < original_path->getStateCount(); ++s) {
                 if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_exit_state) < 1e-3) {
                     DOUT << "!!Found Exit!!" << std::endl;
                     exit_state_idx = s;
+                    exit_found = true;
                     break;
                 }
+            }
+            if (!exit_found) {
+                throw std::runtime_error(
+                    "integrateRefinedPaths: planning_exit_state not found in original path "
+                    "(robot " + std::to_string(robot_idx) + "). Likely floating-point drift "
+                    "from prior splices or state-pointer aliasing.");
             }
             for (size_t s = exit_state_idx + 1; s < original_path->getStateCount(); ++s)
                 spliced_path->append(original_path->getState(s));

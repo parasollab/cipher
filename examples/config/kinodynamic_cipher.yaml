@@ -1,0 +1,17 @@
+timelimit: 600
+max_total_time: 0
+seed: -1
+region_size: 10
+robot_cell_size_ratio: 1.8
+cbs_capacity: 1
+max_obstacle_volume_percent: 0.5
+max_initial_extensions: 1000
+max_blocked_edge_retries: 5
+max_no_progress_iters: 20
+restrict_sampling_to_cell: false
+cbs_timeout: 5.0
+
+guided_planner_method: "guided_idbrrt"
+do_optimization: true
+solver_id: 0
+region_bounds_weight: 100.0

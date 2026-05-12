@@ -611,7 +611,7 @@ class Visualizer:
     def handle_grid_update(self, event):
         for cid in event.get('removed', []):
             self.cells.pop(cid, None)
-        for c in event.get('cells', []):
+        for c in (event.get('cells') or []):
             self.cells[c['id']] = c
         self.coupled_groups = []
         self._draw_all_cells()

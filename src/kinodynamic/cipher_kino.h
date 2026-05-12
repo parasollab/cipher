@@ -326,6 +326,7 @@ private:
     std::vector<KinoGuidedPlanningResult> guided_planning_results_;
     std::vector<std::shared_ptr<oc::PathControl>> robot_paths_;  // Current path per robot
     std::vector<SegmentConflict> segment_conflicts_;     // Detected conflicts
+    mutable std::vector<ob::State*> interp_scratch_states_;  // Per-robot scratch for getStateAtTimestep interpolation
     bool problem_loaded_ = false;
     ResolutionStats resolution_stats_;  // Track conflict resolution statistics
     std::map<std::tuple<size_t, size_t, int>, int> robot_pair_conflict_counts_;  // Cycle detection: (robot1, robot2, timestep) -> count
