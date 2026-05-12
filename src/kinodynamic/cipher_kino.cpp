@@ -30,6 +30,10 @@ struct NullStream : std::ostream { NullStream() : std::ostream(&_buf) {} NullBuf
 #include <ompl/control/planners/rrt/RRT.h>
 #include <ompl/base/spaces/RealVectorStateSpace.h>
 #include <ompl/control/spaces/RealVectorControlSpace.h>
+#include <ompl/multirobot/base/ProblemDefinition.h>
+#include <ompl/multirobot/control/planners/pp/PP.h>
+#include <ompl/multirobot/control/PlanControl.h>
+#include "decoupled_rrt_utils.h"
 #include "dynobench/motions.hpp"
 #include "dynobench/robot_models.hpp"
 #include "dynoplan/ompl/robots.h"
@@ -44,6 +48,8 @@ struct NullStream : std::ostream { NullStream() : std::ostream(&_buf) {} NullBuf
 #include "mapf/cbs.h"
 
 namespace po = boost::program_options;
+namespace omrb = ompl::multirobot::base;
+namespace omrc = ompl::multirobot::control;
 
 // ============================================================================
 // Constructor / Destructor
@@ -997,67 +1003,118 @@ KinoPlanningResult CipherKinoPlanner::useDecoupledPlanner(
     const std::vector<double>& /*subproblem_env_min*/,
     const std::vector<double>& /*subproblem_env_max*/)
 {
-    DOUT << "Using decoupled kinodynamic planner for " << robot_indices.size() << " robots..." << std::endl;
+    DOUT << "Using decoupled kinodynamic planner (PP) for " << robot_indices.size() << " robots..." << std::endl;
 
     KinoPlanningResult result;
     result.solved = false;
     result.planning_time = 0.0;
     result.individual_paths.resize(robot_indices.size(), nullptr);
 
-    auto t_start = std::chrono::steady_clock::now();
+    const int n = static_cast<int>(robot_indices.size());
+
+    auto ma_si   = std::make_shared<omrc::SpaceInformation>();
+    auto ma_pdef = std::make_shared<omrb::ProblemDefinition>(ma_si);
+
+    // --- Pass 1: build per-robot fresh SIs, allocate start/goal states ---
+    std::vector<oc::SpaceInformationPtr>  fresh_sis;
+    std::vector<ob::State*>               start_states_local;
+    std::vector<ob::State*>               goal_states_local;
+    std::vector<std::shared_ptr<Robot>>   selected_robots;
+    std::map<const ob::SpaceInformationPtr, std::shared_ptr<Robot>> all_robots_map;
 
     for (size_t i = 0; i < robot_indices.size(); ++i) {
         size_t r = robot_indices[i];
-        auto robot_si_kino = std::dynamic_pointer_cast<oc::SpaceInformation>(robot_sis_[r]);
-        if (!robot_si_kino) {
+        auto orig_si = std::dynamic_pointer_cast<oc::SpaceInformation>(robot_sis_[r]);
+        if (!orig_si) {
             DOUT << "  Robot " << r << ": no kinodynamic SI" << std::endl;
-            result.planning_time = std::chrono::duration<double>(
-                std::chrono::steady_clock::now() - t_start).count();
             return result;
         }
+        auto robot = robots_[r];
+        selected_robots.push_back(robot);
 
-        ob::State* start_state = robot_si_kino->getStateSpace()->allocState();
-        robot_si_kino->getStateSpace()->copyFromReals(start_state, subproblem_starts[i]);
+        auto fresh_si = std::make_shared<oc::SpaceInformation>(
+            orig_si->getStateSpace(), orig_si->getControlSpace());
+        fresh_si->setPropagationStepSize(orig_si->getPropagationStepSize());
+        fresh_si->setMinMaxControlDuration(
+            orig_si->getMinControlDuration(), orig_si->getMaxControlDuration());
+        fresh_sis.push_back(fresh_si);
+        all_robots_map[fresh_si] = robot;
 
-        ob::State* goal_state = robot_si_kino->getStateSpace()->allocState();
-        robot_si_kino->getStateSpace()->copyFromReals(goal_state, subproblem_goals[i]);
+        auto start_state = fresh_si->getStateSpace()->allocState();
+        fresh_si->getStateSpace()->copyFromReals(start_state, subproblem_starts[i]);
+        start_states_local.push_back(start_state);
 
-        auto goal_cond = std::make_shared<ob::GoalState>(robot_si_kino);
-        goal_cond->setState(goal_state);
-        goal_cond->setThreshold(config_.goal_threshold);
-
-        auto pdef = std::make_shared<ob::ProblemDefinition>(robot_si_kino);
-        pdef->addStartState(start_state);
-        pdef->setGoal(goal_cond);
-
-        auto planner = std::make_shared<oc::RRT>(robot_si_kino);
-        planner->setProblemDefinition(pdef);
-        planner->setup();
-
-        ob::PlannerStatus status = planner->solve(
-            ob::timedPlannerTerminationCondition(config_.planning_time_limit));
-
-        robot_si_kino->getStateSpace()->freeState(start_state);
-        robot_si_kino->getStateSpace()->freeState(goal_state);
-
-        if (!(status == ob::PlannerStatus::EXACT_SOLUTION ||
-              status == ob::PlannerStatus::APPROXIMATE_SOLUTION)) {
-            DOUT << "  Robot " << r << ": decoupled RRT failed" << std::endl;
-            result.planning_time = std::chrono::duration<double>(
-                std::chrono::steady_clock::now() - t_start).count();
-            return result;
-        }
-
-        auto raw_path = pdef->getSolutionPath()->as<oc::PathControl>();
-        result.individual_paths[i] = std::make_shared<oc::PathControl>(*raw_path);
-        DOUT << "  Robot " << r << ": decoupled RRT solved" << std::endl;
+        auto goal_state = fresh_si->getStateSpace()->allocState();
+        fresh_si->getStateSpace()->copyFromReals(goal_state, subproblem_goals[i]);
+        goal_states_local.push_back(goal_state);
     }
 
-    result.solved = true;
+    // --- Pass 2: set validity checkers, propagators, build problem defs ---
+    for (int i = 0; i < n; ++i) {
+        auto fresh_si = fresh_sis[i];
+        auto robot    = selected_robots[i];
+
+        std::vector<std::pair<const ob::State*, std::shared_ptr<Robot>>> other_goals;
+        for (int j = 0; j < n; ++j) {
+            if (j != i && !statesOverlap(goal_states_local[j], selected_robots[j],
+                                          start_states_local[i], robot))
+                other_goals.emplace_back(goal_states_local[j], selected_robots[j]);
+        }
+
+        fresh_si->setStateValidityChecker(
+            std::make_shared<IndividualStateValidityChecker>(
+                fresh_si, collision_manager_, robot, all_robots_map, other_goals));
+        fresh_si->setStatePropagator(
+            std::make_shared<RobotStatePropagator>(fresh_si, robot));
+        fresh_si->setup();
+
+        auto pdef = std::make_shared<ob::ProblemDefinition>(fresh_si);
+        pdef->addStartState(start_states_local[i]);
+        pdef->setGoal(std::make_shared<IndividualGoalCondition>(
+            fresh_si, goal_states_local[i], config_.goal_threshold));
+
+        ma_si->addIndividual(fresh_si);
+        ma_pdef->addIndividual(pdef);
+    }
+
+    ma_si->lock();
+    ma_pdef->lock();
+    ma_si->setPlannerAllocator([](const ob::SpaceInformationPtr& si) -> ob::PlannerPtr {
+        auto rrt = std::make_shared<oc::RRT>(
+            std::static_pointer_cast<oc::SpaceInformation>(si));
+        rrt->setIntermediateStates(true);
+        return rrt;
+    });
+
+    auto planner = std::make_shared<omrc::PP>(ma_si);
+    planner->setProblemDefinition(ma_pdef);
+
+    auto t_start = std::chrono::steady_clock::now();
+    bool solved  = planner->as<omrb::Planner>()->solve(config_.planning_time_limit);
     result.planning_time = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - t_start).count();
-    DOUT << "  Decoupled planner solved all " << robot_indices.size()
-         << " robots in " << result.planning_time << "s" << std::endl;
+
+    if (solved) {
+        auto solution  = ma_pdef->getSolutionPlan();
+        auto ctrl_plan = solution ? solution->as<omrc::PlanControl>() : nullptr;
+        if (ctrl_plan) {
+            bool all_ok = true;
+            for (int i = 0; i < n; ++i) {
+                auto path = ctrl_plan->getPath(i);
+                if (!path) { all_ok = false; break; }
+                result.individual_paths[i] = std::make_shared<oc::PathControl>(*path);
+            }
+            result.solved = all_ok;
+        }
+    }
+
+    for (int i = 0; i < n; ++i) {
+        fresh_sis[i]->getStateSpace()->freeState(start_states_local[i]);
+        fresh_sis[i]->getStateSpace()->freeState(goal_states_local[i]);
+    }
+
+    DOUT << "  Decoupled PP planner: solved=" << result.solved
+         << " time=" << result.planning_time << "s" << std::endl;
     return result;
 }
 
@@ -2838,41 +2895,19 @@ int main(int argc, char** argv)
         YAML::Node result_node;
         for (const auto& gpr : guided_paths) {
             YAML::Node robot_node;
-            YAML::Node waypoints;
+            YAML::Node states_list;
             if (gpr.path) {
                 const auto& path = *gpr.path;
                 auto si = path.getSpaceInformation();
-                const size_t n = path.getStateCount();
-                for (size_t s = 0; s < n; ++s) {
-                    YAML::Node wp;
-
+                for (size_t s = 0; s < path.getStateCount(); ++s) {
                     std::vector<double> reals;
                     si->getStateSpace()->copyToReals(reals, path.getState(s));
                     YAML::Node state_node;
                     for (double v : reals) state_node.push_back(v);
-                    wp["state"] = state_node;
-
-                    YAML::Node ctrl;
-                    if (s < path.getControlCount()) {
-                        auto* oc_si = dynamic_cast<oc::SpaceInformation*>(si.get());
-                        if (oc_si) {
-                            auto ctrl_space = oc_si->getControlSpace()->as<oc::RealVectorControlSpace>();
-                            const double* ctrl_vals = path.getControl(s)->as<oc::RealVectorControlSpace::ControlType>()->values;
-                            for (unsigned int k = 0; k < ctrl_space->getDimension(); ++k)
-                                ctrl.push_back(ctrl_vals[k]);
-                        } else {
-                            ctrl.push_back(0.0); ctrl.push_back(0.0);
-                        }
-                    } else {
-                        ctrl.push_back(0.0); ctrl.push_back(0.0);
-                    }
-                    wp["control"] = ctrl;
-                    wp["duration"] = (s < path.getControlCount()) ? path.getControlDuration(s) : 0.0;
-
-                    waypoints.push_back(wp);
+                    states_list.push_back(state_node);
                 }
             }
-            robot_node["waypoints"] = waypoints;
+            robot_node["states"] = states_list;
             result_node.push_back(robot_node);
         }
         output["result"] = result_node;

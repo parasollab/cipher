@@ -4,16 +4,10 @@
 #include <ompl/multirobot/control/planners/pp/PP.h>
 #include <ompl/multirobot/control/PlanControl.h>
 
-
 // OMPL base headers
-#include <ompl/base/goals/GoalRegion.h>
-#include <ompl/base/spaces/SE2StateSpace.h>
 #include <ompl/base/spaces/RealVectorStateSpace.h>
 #include <ompl/base/StateSpace.h>
 #include <ompl/control/planners/rrt/RRT.h>
-
-// FCL
-#include <fcl/fcl.h>
 
 // Standard library
 #include <iostream>
@@ -30,157 +24,19 @@
 #include <boost/program_options.hpp>
 
 // db-CBS robot dynamics
-#include "robots.h"
-#include "fclStateValidityChecker.hpp"
 #include "robotStatePropagator.hpp"
+#include "decoupled_rrt_utils.h"
 
-namespace ob = ompl::base;
 namespace oc = ompl::control;
 namespace omrb = ompl::multirobot::base;
 namespace omrc = ompl::multirobot::control;
 namespace po = boost::program_options;
-
-
-class IndividualStateValidityChecker : public fclStateValidityChecker
-{
-public:
-    IndividualStateValidityChecker(
-        ob::SpaceInformationPtr si,
-        std::shared_ptr<fcl::BroadPhaseCollisionManagerf> col_mng_environment,
-        std::shared_ptr<Robot> robot,
-        std::map<const ob::SpaceInformationPtr, std::shared_ptr<Robot>> all_robots,
-        std::vector<std::pair<const ob::State*, std::shared_ptr<Robot>>> other_goals)
-        : fclStateValidityChecker(si, col_mng_environment, robot, false)
-        , all_robots_(all_robots)
-        , other_goals_(other_goals)
-    {}
-
-    bool isValid(const ob::State* state) const override {
-        if (!fclStateValidityChecker::isValid(state)) {
-            return false;
-        }
-        const auto& t1 = robot_->getTransform(state, 0);
-        fcl::CollisionObjectf co1(robot_->getCollisionGeometry(0));
-        co1.setTranslation(t1.translation());
-        co1.setRotation(t1.rotation());
-        co1.computeAABB();
-
-        for (const auto& [goal_state, other_robot] : other_goals_) {
-            const auto& t2 = other_robot->getTransform(goal_state, 0);
-            fcl::CollisionObjectf co2(other_robot->getCollisionGeometry(0));
-            co2.setTranslation(t2.translation());
-            co2.setRotation(t2.rotation());
-            co2.computeAABB();
-
-            fcl::CollisionRequest<float> request;
-            fcl::CollisionResult<float> result;
-            fcl::collide(&co1, &co2, request, result);
-            if (result.isCollision()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    bool areStatesValid(
-        const ob::State* state1,
-        const std::pair<const ob::SpaceInformationPtr, const ob::State*> state2) const override
-    {
-        const int part = 0;
-
-        const auto& t1 = robot_->getTransform(state1, part);
-        fcl::CollisionObjectf co1(robot_->getCollisionGeometry(part));
-        co1.setTranslation(t1.translation());
-        co1.setRotation(t1.rotation());
-        co1.computeAABB();
-
-        auto iter = all_robots_.find(state2.first);
-        if (iter != all_robots_.end()) {
-            auto other_robot = iter->second;
-            if (!state2.second) {
-                return true;
-            }
-            // Try reading the state as SE2 to verify it's valid memory before getTransform
-            const auto* se2 = state2.second->as<ob::SE2StateSpace::StateType>();
-            const auto& t2 = other_robot->getTransform(state2.second, part);
-            fcl::CollisionObjectf co2(other_robot->getCollisionGeometry(part));
-            co2.setTranslation(t2.translation());
-            co2.setRotation(t2.rotation());
-            co2.computeAABB();
-
-            fcl::CollisionRequest<float> request;
-            fcl::CollisionResult<float> result;
-            fcl::collide(&co1, &co2, request, result);
-            bool collision = result.isCollision();
-
-            if (collision) {
-                return false;
-            }
-        } else {
-            return false;
-        }
-        return true;
-    }
-
-private:
-    std::map<const ob::SpaceInformationPtr, std::shared_ptr<Robot>> all_robots_;
-    std::vector<std::pair<const ob::State*, std::shared_ptr<Robot>>> other_goals_;
-};
-
-
-class IndividualGoalCondition : public ob::GoalRegion
-{
-public:
-    IndividualGoalCondition(
-        const ob::SpaceInformationPtr& si,
-        const ob::State* goal_state,
-        double threshold)
-        : ob::GoalRegion(si), goal_state_(goal_state)
-    {
-        threshold_ = threshold;
-    }
-
-    double distanceGoal(const ob::State* st) const override
-    {
-        return si_->distance(st, goal_state_);
-    }
-
-private:
-    const ob::State* goal_state_;  // non-owning; lifetime managed by goal_states vector in main
-};
-
-
-ob::PlannerPtr plannerAllocator(const ob::SpaceInformationPtr& si)
+static ob::PlannerPtr plannerAllocator(const ob::SpaceInformationPtr& si)
 {
     auto planner = std::make_shared<oc::RRT>(std::static_pointer_cast<oc::SpaceInformation>(si));
     planner->setIntermediateStates(true);
     return planner;
-    // return std::make_shared<oc::RRT>(std::static_pointer_cast<oc::SpaceInformation>(si));
 }
-
-
-static bool statesOverlap(
-    const ob::State* s1, std::shared_ptr<Robot> r1,
-    const ob::State* s2, std::shared_ptr<Robot> r2)
-{
-    const auto& t1 = r1->getTransform(s1, 0);
-    fcl::CollisionObjectf co1(r1->getCollisionGeometry(0));
-    co1.setTranslation(t1.translation());
-    co1.setRotation(t1.rotation());
-    co1.computeAABB();
-
-    const auto& t2 = r2->getTransform(s2, 0);
-    fcl::CollisionObjectf co2(r2->getCollisionGeometry(0));
-    co2.setTranslation(t2.translation());
-    co2.setRotation(t2.rotation());
-    co2.computeAABB();
-
-    fcl::CollisionRequest<float> request;
-    fcl::CollisionResult<float> result;
-    fcl::collide(&co1, &co2, request, result);
-    return result.isCollision();
-}
-
 
 int main(int argc, char** argv)
 {
@@ -315,6 +171,7 @@ int main(int argc, char** argv)
         auto robot = create_robot(robotType, position_bounds);
         auto state_space = robot->getSpaceInformation()->getStateSpace();
         state_space->setName("Robot " + std::to_string(robot_idx));
+        state_space->setup();  // populate valueLocations_ before copyFromReals in Pass 2a
 
         auto robot_si = robot->getSpaceInformation();
 

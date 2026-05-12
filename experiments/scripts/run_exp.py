@@ -36,7 +36,7 @@ def get_extra_args(method, output_full_path, timeout):
 
 def get_env(method):
     env = os.environ.copy()
-    if method == 'k_arc':
+    if method in ('k_arc', 'kinodynamic_cipher'):
         lib_path = '/home/courtney/cipher/install/lib'
         existing = env.get('LD_LIBRARY_PATH', '')
         env['LD_LIBRARY_PATH'] = f"{lib_path}:{existing}" if existing else lib_path
