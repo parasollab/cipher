@@ -910,6 +910,11 @@ void CipherKinoPlanner::cleanup()
     collision_manager_.reset();
     problem_loaded_ = false;
     resolution_stats_ = ResolutionStats();  // Reset resolution statistics
+    for (auto& [key, region_map] : robot_pair_refinement_info) {
+        for (auto& [regions, infos] : region_map)
+            freeUpdateInfoStates(key.first, key.second, infos.first, infos.second);
+    }
+    robot_pair_refinement_info.clear();
     robot_pair_conflict_counts_.clear();   // Reset cycle detection counters
     decomposition_hierarchy_.clear();       // Clear decomposition hierarchy
     region_viz_id_.clear();                 // Reset viz ID map
@@ -1894,6 +1899,17 @@ bool CipherKinoPlanner::refineExpandedRegion(
             }
         }
 
+        // Invalidate cached bounds for this robot pair — paths were just updated,
+        // so any stored PathUpdateInfo (including planning_exit_state) is now stale.
+        for (auto key : {std::make_pair(robot_1, robot_2), std::make_pair(robot_2, robot_1)}) {
+            auto it = robot_pair_refinement_info.find(key);
+            if (it != robot_pair_refinement_info.end()) {
+                for (auto& [regions, infos] : it->second)
+                    freeUpdateInfoStates(key.first, key.second, infos.first, infos.second);
+                robot_pair_refinement_info.erase(it);
+            }
+        }
+
         // Record integrated paths
         if (do_viz_) {
             for (size_t i = 0; i < replan_robot_indices.size(); ++i) {
@@ -2147,8 +2163,49 @@ bool CipherKinoPlanner::extractReplanningBoundsForExpandedRegion(
         return true;
     };
 
+    auto robot_key  = std::make_pair(robot_1, robot_2);
+    auto& region_cache = robot_pair_refinement_info[robot_key];
+    auto cache_it = region_cache.find(expanded_regions);
+    if (cache_it != region_cache.end()) {
+        DOUT << "Cache hit for robot pair (" << robot_1 << ", " << robot_2
+             << ") with " << expanded_regions.size() << " regions" << std::endl;
+        // Deep copy: allocate fresh states so locals own them independently of the cache.
+        const auto& c1 = cache_it->second.first;
+        const auto& c2 = cache_it->second.second;
+        auto* si_1 = robot_sis_[robot_1].get();
+        auto* si_2 = robot_sis_[robot_2].get();
+        update_info_1 = c1;
+        update_info_1.region_entry_state   = si_1->cloneState(c1.region_entry_state);
+        update_info_1.region_exit_state    = si_1->cloneState(c1.region_exit_state);
+        update_info_1.planning_entry_state = si_1->cloneState(c1.planning_entry_state);
+        update_info_1.planning_exit_state  = si_1->cloneState(c1.planning_exit_state);
+        update_info_2 = c2;
+        update_info_2.region_entry_state   = si_2->cloneState(c2.region_entry_state);
+        update_info_2.region_exit_state    = si_2->cloneState(c2.region_exit_state);
+        update_info_2.planning_entry_state = si_2->cloneState(c2.planning_entry_state);
+        update_info_2.planning_exit_state  = si_2->cloneState(c2.planning_exit_state);
+        return true;
+    }
+
     bool success_1 = extractForRobot(robot_1, update_info_1);
     bool success_2 = extractForRobot(robot_2, update_info_2);
+
+    if (success_1 && success_2) {
+        // Deep copy: cache owns its own states independently of the local update_infos.
+        PathUpdateInfo cached_1 = update_info_1;
+        PathUpdateInfo cached_2 = update_info_2;
+        auto* si_1 = robot_sis_[robot_1].get();
+        auto* si_2 = robot_sis_[robot_2].get();
+        cached_1.region_entry_state   = si_1->cloneState(update_info_1.region_entry_state);
+        cached_1.region_exit_state    = si_1->cloneState(update_info_1.region_exit_state);
+        cached_1.planning_entry_state = si_1->cloneState(update_info_1.planning_entry_state);
+        cached_1.planning_exit_state  = si_1->cloneState(update_info_1.planning_exit_state);
+        cached_2.region_entry_state   = si_2->cloneState(update_info_2.region_entry_state);
+        cached_2.region_exit_state    = si_2->cloneState(update_info_2.region_exit_state);
+        cached_2.planning_entry_state = si_2->cloneState(update_info_2.planning_entry_state);
+        cached_2.planning_exit_state  = si_2->cloneState(update_info_2.planning_exit_state);
+        robot_pair_refinement_info[robot_key][expanded_regions] = {cached_1, cached_2};
+    }
 
     return success_1 && success_2;
 }
