@@ -910,6 +910,11 @@ void CipherKinoPlanner::cleanup()
     collision_manager_.reset();
     problem_loaded_ = false;
     resolution_stats_ = ResolutionStats();  // Reset resolution statistics
+    for (auto& [key, region_map] : robot_pair_refinement_info) {
+        for (auto& [regions, infos] : region_map)
+            freeUpdateInfoStates(key.first, key.second, infos.first, infos.second);
+    }
+    robot_pair_refinement_info.clear();
     robot_pair_conflict_counts_.clear();   // Reset cycle detection counters
     decomposition_hierarchy_.clear();       // Clear decomposition hierarchy
     region_viz_id_.clear();                 // Reset viz ID map
@@ -1896,8 +1901,14 @@ bool CipherKinoPlanner::refineExpandedRegion(
 
         // Invalidate cached bounds for this robot pair — paths were just updated,
         // so any stored PathUpdateInfo (including planning_exit_state) is now stale.
-        robot_pair_refinement_info.erase(std::make_pair(robot_1, robot_2));
-        robot_pair_refinement_info.erase(std::make_pair(robot_2, robot_1));
+        for (auto key : {std::make_pair(robot_1, robot_2), std::make_pair(robot_2, robot_1)}) {
+            auto it = robot_pair_refinement_info.find(key);
+            if (it != robot_pair_refinement_info.end()) {
+                for (auto& [regions, infos] : it->second)
+                    freeUpdateInfoStates(key.first, key.second, infos.first, infos.second);
+                robot_pair_refinement_info.erase(it);
+            }
+        }
 
         // Record integrated paths
         if (do_viz_) {
