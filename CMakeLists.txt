@@ -35,6 +35,7 @@ add_executable(geometric_cipher
   src/geometric/decoupled_rrt.cpp
   src/utils/grid_decomposition.cpp
   src/mapf/cbs.cpp
+  src/mapf/astar.cpp
   db-CBS/src/robots.cpp
 )
 target_include_directories(geometric_cipher PRIVATE
