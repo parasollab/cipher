@@ -2177,23 +2177,23 @@ void CipherKinoPlanner::freeUpdateInfoStates(
     PathUpdateInfo& update_info_1,
     PathUpdateInfo& update_info_2)
 {
-    // auto freeIfNotNull = [](ob::SpaceInformation* si, ob::State*& s) {
-    //     if (s) { si->freeState(s); s = nullptr; }
-    // };
-    // if (robot_1 < robot_sis_.size()) {
-    //     auto* si = robot_sis_[robot_1].get();
-    //     freeIfNotNull(si, update_info_1.region_entry_state);
-    //     freeIfNotNull(si, update_info_1.region_exit_state);
-    //     freeIfNotNull(si, update_info_1.planning_entry_state);
-    //     freeIfNotNull(si, update_info_1.planning_exit_state);
-    // }
-    // if (robot_2 < robot_sis_.size()) {
-    //     auto* si = robot_sis_[robot_2].get();
-    //     freeIfNotNull(si, update_info_2.region_entry_state);
-    //     freeIfNotNull(si, update_info_2.region_exit_state);
-    //     freeIfNotNull(si, update_info_2.planning_entry_state);
-    //     freeIfNotNull(si, update_info_2.planning_exit_state);
-    // }
+    auto freeIfNotNull = [](ob::SpaceInformation* si, ob::State*& s) {
+        if (s) { si->freeState(s); s = nullptr; }
+    };
+    if (robot_1 < robot_sis_.size()) {
+        auto* si = robot_sis_[robot_1].get();
+        freeIfNotNull(si, update_info_1.region_entry_state);
+        freeIfNotNull(si, update_info_1.region_exit_state);
+        freeIfNotNull(si, update_info_1.planning_entry_state);
+        freeIfNotNull(si, update_info_1.planning_exit_state);
+    }
+    if (robot_2 < robot_sis_.size()) {
+        auto* si = robot_sis_[robot_2].get();
+        freeIfNotNull(si, update_info_2.region_entry_state);
+        freeIfNotNull(si, update_info_2.region_exit_state);
+        freeIfNotNull(si, update_info_2.planning_entry_state);
+        freeIfNotNull(si, update_info_2.planning_exit_state);
+    }
 }
 
 // ============================================================================
