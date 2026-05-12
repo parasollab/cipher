@@ -244,8 +244,15 @@ CipherKinoResult CipherKinoPlanner::plan()
                         result.failure_reason = "strategies_exhausted";
                     }
                 } else {
-                    DOUT << "[Phase 5] All conflicts resolved" << std::endl;
-                    result.success = true;
+                    DOUT << "[Phase 5] All conflicts resolved, running final verification..." << std::endl;
+                    if (checkPathsForConflicts()) {
+                        std::cerr << "resolveConflicts() declared success but full scan found "
+                                  << segment_conflicts_.size() << " remaining conflicts" << std::endl;
+                        result.success = false;
+                        result.failure_reason = "resolve_declared_false_success";
+                    } else {
+                        result.success = true;
+                    }
                 }
             } else {
                 DOUT << "[Phase 5] No conflicts to resolve" << std::endl;
@@ -856,6 +863,12 @@ void CipherKinoPlanner::cleanup()
         goal_states_.clear();
     }
 
+    for (size_t r = 0; r < interp_scratch_states_.size(); ++r) {
+        if (interp_scratch_states_[r] && r < robot_sis_.size() && robot_sis_[r])
+            robot_sis_[r]->freeState(interp_scratch_states_[r]);
+    }
+    interp_scratch_states_.clear();
+
     // Clear other data (but don't delete obstacles - caller owns them)
     robots_.clear();
     high_level_paths_.clear();
@@ -885,8 +898,23 @@ ob::State* CipherKinoPlanner::getStateAtTimestep(size_t robot_idx, int timestep)
     int cumulative = 0;
     for (size_t k = 0; k < path->getControlCount(); ++k) {
         int steps_k = (int)std::round(path->getControlDuration(k) / step_size);
-        if (timestep < cumulative + steps_k)
-            return path->getState(k);
+        if (timestep < cumulative + steps_k) {
+            if (interp_scratch_states_.size() <= robot_idx || !interp_scratch_states_[robot_idx]) {
+                interp_scratch_states_.resize(
+                    std::max(interp_scratch_states_.size(), robot_idx + 1), nullptr);
+                interp_scratch_states_[robot_idx] = robot_sis_[robot_idx]->allocState();
+            }
+            // Propagate the actual dynamics for a partial duration rather than
+            // linearly interpolating. Interpolation is wrong for kinodynamic systems
+            // (unicycle arcs ≠ straight lines) and produces false-positive conflicts.
+            double partial_duration = (double)(timestep - cumulative) * step_size;
+            robots_[robot_idx]->propagate(
+                path->getState(k),
+                path->getControl(k),
+                partial_duration,
+                interp_scratch_states_[robot_idx]);
+            return interp_scratch_states_[robot_idx];
+        }
         cumulative += steps_k;
     }
     return path->getState(path->getStateCount() - 1);
@@ -2080,12 +2108,20 @@ void CipherKinoPlanner::integrateRefinedPaths(
 
             // Part 1: copy original up to and including the entry state
             size_t entry_state_idx = 0;
+            bool entry_found = false;
             for (size_t s = 0; s < original_path->getStateCount(); ++s) {
                 if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_entry_state) < 1e-3) {
                     DOUT << "!!Found Start!!" << std::endl;
                     entry_state_idx = s;
+                    entry_found = true;
                     break;
                 }
+            }
+            if (!entry_found) {
+                throw std::runtime_error(
+                    "integrateRefinedPaths: planning_entry_state not found in original path "
+                    "(robot " + std::to_string(robot_idx) + "). Likely floating-point drift "
+                    "from prior splices or state-pointer aliasing.");
             }
             // Part 1: original path up to and including the entry state (with controls)
             spliced_path->append(original_path->getState(0));
@@ -2102,12 +2138,20 @@ void CipherKinoPlanner::integrateRefinedPaths(
 
             // Part 3: original path after the exit state (with controls)
             size_t exit_state_idx = original_path->getStateCount() - 1;
+            bool exit_found = false;
             for (size_t s = entry_state_idx; s < original_path->getStateCount(); ++s) {
                 if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_exit_state) < 1e-3) {
                     DOUT << "!!Found Exit!!" << std::endl;
                     exit_state_idx = s;
+                    exit_found = true;
                     break;
                 }
+            }
+            if (!exit_found) {
+                throw std::runtime_error(
+                    "integrateRefinedPaths: planning_exit_state not found in original path "
+                    "(robot " + std::to_string(robot_idx) + "). Likely floating-point drift "
+                    "from prior splices or state-pointer aliasing.");
             }
             for (size_t s = exit_state_idx; s < original_path->getControlCount(); ++s)
                 spliced_path->append(original_path->getState(s + 1),
@@ -2125,51 +2169,9 @@ void CipherKinoPlanner::integrateRefinedPaths(
     }
 }
 
-void CipherKinoPlanner::recheckConflictsFromTimestep(int start_timestep)
+void CipherKinoPlanner::recheckConflictsFromTimestep(int /*start_timestep*/)
 {
-    DOUT << "Re-checking conflicts from timestep " << start_timestep << std::endl;
-
-    segment_conflicts_.clear();
-
-    int max_timestep = 0;
-    for (size_t r = 0; r < robot_paths_.size(); ++r) {
-        if (!robot_paths_[r] || robot_paths_[r]->getStateCount() == 0) continue;
-        auto* oc_si = dynamic_cast<oc::SpaceInformation*>(robot_sis_[r].get());
-        double step_size = oc_si ? oc_si->getPropagationStepSize() : 1.0;
-        int total_steps = 0;
-        for (size_t k = 0; k < robot_paths_[r]->getControlCount(); ++k)
-            total_steps += (int)std::round(robot_paths_[r]->getControlDuration(k) / step_size);
-        max_timestep = std::max(max_timestep, total_steps);
-    }
-
-    if (robots_.size() < 2) return;
-
-    for (int timestep = start_timestep; timestep < max_timestep; ++timestep) {
-        for (size_t i = 0; i < robots_.size(); ++i) {
-            ob::State* si = getStateAtTimestep(i, timestep);
-            if (!si) continue;
-            for (size_t j = i + 1; j < robots_.size(); ++j) {
-                ob::State* sj = getStateAtTimestep(j, timestep);
-                if (!sj) continue;
-                size_t part_i, part_j;
-                if (checkTwoRobotConflict(i, si, j, sj, part_i, part_j)) {
-                    SegmentConflict coll;
-                    coll.type = SegmentConflict::ROBOT_ROBOT;
-                    coll.robot_index_1 = i;
-                    coll.robot_index_2 = j;
-                    coll.timestep = timestep;
-                    coll.part_index_1 = part_i;
-                    coll.part_index_2 = part_j;
-                    segment_conflicts_.push_back(coll);
-                    DOUT << "    Found robot-robot conflict at timestep " << timestep << std::endl;
-                    return;
-                }
-            }
-        }
-    }
-
-    DOUT << "    Total conflicts found: " << segment_conflicts_.size() << std::endl;
-
+    checkPathsForConflicts();
 }
 
 int CipherKinoPlanner::getRecheckStartTimestep(
