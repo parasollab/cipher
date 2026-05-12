@@ -15,6 +15,7 @@ name_map = {
     'kcbs': 'KCBS',
     'k_arc': 'K-ARC',
     'geometric_cipher': 'CIPHER',
+    'kinodynamic_cipher': 'CIPHER',
 }
 
 # CIPHER first, then all other methods in a stable order
@@ -46,7 +47,7 @@ CONFIGS = [
             'open_70x70', 'rooms_70x70',
             'low_clutter_70x70', 'medium_clutter_70x70', 'high_clutter_70x70',
         ],
-        'methods': ['kino_coupled_rrt', 'kino_decoupled_rrt', 'kcbs', 'k_arc'],
+        'methods': ['kino_coupled_rrt', 'kino_decoupled_rrt', 'kcbs', 'k_arc', 'kinodynamic_cipher'],
     },
 ]
 

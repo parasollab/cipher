@@ -12,15 +12,15 @@
 #include <ompl/util/RandomNumbers.h>
 #include <ompl/control/spaces/RealVectorControlSpace.h>
 
-#ifdef DOUT_ENABLED
+// #ifdef DOUT_ENABLED
 #define DOUT std::cout
-#else
-namespace {
-struct NullBuf : std::streambuf { int overflow(int c) override { return c; } };
-struct NullStream : std::ostream { NullStream() : std::ostream(&_buf) {} NullBuf _buf; } _null_stream;
-}
-#define DOUT _null_stream
-#endif
+// #else
+// namespace {
+// struct NullBuf : std::streambuf { int overflow(int c) override { return c; } };
+// struct NullStream : std::ostream { NullStream() : std::ostream(&_buf) {} NullBuf _buf; } _null_stream;
+// }
+// #define DOUT _null_stream
+// #endif
 
 #include "robotStatePropagator.hpp"
 #include "fclStateValidityChecker.hpp"
@@ -213,42 +213,38 @@ CipherKinoResult CipherKinoPlanner::plan()
             if (!all_paths_found) {
                 result.success = false;
                 result.failure_reason = "guided_path_failed";
-                auto end_time = std::chrono::steady_clock::now();
-                result.planning_time = std::chrono::duration<double>(end_time - planning_start_time_).count();
-                result.resolution_stats = resolution_stats_;
-                return result;
-            }
+            } else {
+                DOUT << "[Phase 3] Checking paths for conflicts..." << std::endl;
+                bool conflicts_found = checkPathsForConflicts();
+                DOUT << "[Phase 3] Conflict checking complete: " << segment_conflicts_.size() << " conflicts found." << std::endl;
 
-            DOUT << "[Phase 3] Checking paths for conflicts..." << std::endl;
-            bool conflicts_found = checkPathsForConflicts();
-            DOUT << "[Phase 3] Conflict checking complete: " << segment_conflicts_.size() << " conflicts found." << std::endl;
-
-            // Phase 4: Resolve conflicts
-            if (conflicts_found) {
-                DOUT << "[Phase 5] Resolving conflicts..." << std::endl;
-                bool conflicts_resolved = resolveConflicts();
-                if (!conflicts_resolved) {
-                    std::cerr << "Planning failed: could not resolve all conflicts" << std::endl;
-                    result.success = false;
-                    if (isTimeoutExceeded()) {
-                        result.failure_reason = "timeout_conflict_resolution";
+                // Phase 4: Resolve conflicts
+                if (conflicts_found) {
+                    DOUT << "[Phase 5] Resolving conflicts..." << std::endl;
+                    bool conflicts_resolved = resolveConflicts();
+                    if (!conflicts_resolved) {
+                        std::cerr << "Planning failed: could not resolve all conflicts" << std::endl;
+                        result.success = false;
+                        if (isTimeoutExceeded()) {
+                            result.failure_reason = "timeout_conflict_resolution";
+                        } else {
+                            result.failure_reason = "strategies_exhausted";
+                        }
                     } else {
-                        result.failure_reason = "strategies_exhausted";
+                        DOUT << "[Phase 5] All conflicts resolved, running final verification..." << std::endl;
+                        if (checkPathsForConflicts()) {
+                            std::cerr << "resolveConflicts() declared success but full scan found "
+                                      << segment_conflicts_.size() << " remaining conflicts" << std::endl;
+                            result.success = false;
+                            result.failure_reason = "resolve_declared_false_success";
+                        } else {
+                            result.success = true;
+                        }
                     }
                 } else {
-                    DOUT << "[Phase 5] All conflicts resolved, running final verification..." << std::endl;
-                    if (checkPathsForConflicts()) {
-                        std::cerr << "resolveConflicts() declared success but full scan found "
-                                  << segment_conflicts_.size() << " remaining conflicts" << std::endl;
-                        result.success = false;
-                        result.failure_reason = "resolve_declared_false_success";
-                    } else {
-                        result.success = true;
-                    }
+                    DOUT << "[Phase 5] No conflicts to resolve" << std::endl;
+                    result.success = true;
                 }
-            } else {
-                DOUT << "[Phase 5] No conflicts to resolve" << std::endl;
-                result.success = true;
             }
         }
 
