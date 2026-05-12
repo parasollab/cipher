@@ -479,6 +479,19 @@ void CipherKinoPlanner::computeGuidedPaths()
                 problem.p_lb, problem.p_ub).release());
         dynobench::load_env(*robot_model, problem);
 
+        // YAML start/goal may omit velocity dimensions (e.g. [x,y,theta] for a
+        // 5-DOF model). Pad with zeros so nigh's fixed-size key extraction does
+        // not read past the end of the vector.
+        auto pad_to_nx = [&](Eigen::VectorXd &v) {
+            if (v.size() < robot_model->nx) {
+                Eigen::VectorXd padded = Eigen::VectorXd::Zero(robot_model->nx);
+                padded.head(v.size()) = v;
+                v = padded;
+            }
+        };
+        pad_to_nx(problem.start);
+        pad_to_nx(problem.goal);
+
         // Configure guided planner options
         std::vector<dynoplan::Motion> motions;
         dynoplan::Options_dbrrt options_dbrrt = config_.options_dbrrt;

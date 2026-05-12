@@ -117,7 +117,7 @@ struct CipherKinoConfig {
 
     // Dynobench/dynoplan configuration (required for guided_idbrrt)
     std::string models_base_path = "./db-CBS/dynoplan/dynobench/models";  // path to dynobench model YAML files (e.g. /path/to/models)
-    std::string motions_file     = "./db-CBS/dynoplan/dynomotions/unicycle1_v0__ispso__2023_04_03__14_56_57.bin.im.bin.im.bin.small5000.msgpack";  // path to motion primitives file (.msgpack)
+    std::string motions_file     = ""; // "./db-CBS/dynoplan/dynomotions/unicycle1_v0__ispso__2023_04_03__14_56_57.bin.im.bin.im.bin.small5000.msgpack";  // path to motion primitives file (.msgpack)
 
     dynoplan::Options_dbrrt options_dbrrt;
     dynoplan::Options_trajopt options_trajopt;
