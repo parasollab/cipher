@@ -343,8 +343,6 @@ private:
     // Hierarchical decomposition tracking
     std::vector<DecompositionCell> decomposition_hierarchy_;  // One cell per initial region
 
-    std::map<std::pair<int, int>, std::map<std::vector<int>, std::pair<PathUpdateInfo, PathUpdateInfo>>> robot_pair_refinement_info;
-
     // Tracks (expansion_layer, refinement_level) at which each leaf cell was last decomposed.
     // A cell may only be re-decomposed within the same expansion_layer at a strictly higher
     // refinement_level; cells refined in any earlier expansion_layer are never touched again.
