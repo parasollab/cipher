@@ -317,30 +317,14 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
         }
 
         if (cbs_exhausted) {
-            // CBS could not find region-level paths even after decomposition; try planning
-            // all robots jointly in the full configuration space.
             if (isTimeoutExceeded()) {
-                std::cerr << "Planning timeout exceeded before composite fallback" << std::endl;
+                std::cerr << "Planning timeout exceeded after CBS exhausted" << std::endl;
                 result.success = false;
                 result.failure_reason = "timeout_cbs_failed";
-            } else if (config_.conflict_resolution_config.max_composite_attempts <= 0) {
-                std::cerr << "CBS exhausted and composite fallback disabled (max_composite_attempts=0)" << std::endl;
-                result.success = false;
-                result.failure_reason = "cbs_failed_composite_disabled";
             } else {
-                DOUT << "[Fallback] CBS exhausted; attempting full-problem composite planner ("
-                     << config_.conflict_resolution_config.max_composite_attempts << " attempt(s))..." << std::endl;
-                std::vector<size_t> all_robot_indices;
-                for (size_t i = 0; i < robots_.size(); ++i) all_robot_indices.push_back(i);
-                GeometricPlanningResult composite_result =
-                    useCompositePlanner(all_robot_indices, starts_, goals_, env_min_, env_max_);
-                result.success = composite_result.solved;
-                if (!composite_result.solved) {
-                    std::cerr << "CBS fallback: composite planner also failed" << std::endl;
-                    result.failure_reason = "cbs_failed_composite_failed";
-                } else {
-                    DOUT << "[Fallback] Composite planner succeeded" << std::endl;
-                }
+                std::cerr << "[Fallback] CBS exhausted; falling back to decoupled/coupled RRT" << std::endl;
+                result.success = false;
+                result.failure_reason = "cbs_exhausted";
             }
         } else {
             DOUT << "[Phase 3] Checking paths for conflicts..." << std::endl;

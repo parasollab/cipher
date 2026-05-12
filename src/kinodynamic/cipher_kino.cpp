@@ -188,27 +188,13 @@ CipherKinoResult CipherKinoPlanner::plan()
 
         if (cbs_exhausted) {
             if (isTimeoutExceeded()) {
-                std::cerr << "Planning timeout exceeded before composite fallback" << std::endl;
+                std::cerr << "Planning timeout exceeded after CBS exhausted" << std::endl;
                 result.success = false;
                 result.failure_reason = "timeout_cbs_failed";
-            } else if (config_.conflict_resolution_config.max_composite_attempts <= 0) {
-                std::cerr << "CBS exhausted and composite fallback disabled (max_composite_attempts=0)" << std::endl;
-                result.success = false;
-                result.failure_reason = "cbs_failed_composite_disabled";
             } else {
-                DOUT << "[Fallback] CBS exhausted; attempting full-problem composite planner ("
-                     << config_.conflict_resolution_config.max_composite_attempts << " attempt(s))..." << std::endl;
-                std::vector<size_t> all_robot_indices;
-                for (size_t i = 0; i < robots_.size(); ++i) all_robot_indices.push_back(i);
-                KinoPlanningResult composite_result =
-                    useCompositePlanner(all_robot_indices, starts_, goals_, env_min_, env_max_);
-                result.success = composite_result.solved;
-                if (!composite_result.solved) {
-                    std::cerr << "CBS fallback: composite planner also failed" << std::endl;
-                    result.failure_reason = "cbs_failed_composite_failed";
-                } else {
-                    DOUT << "[Fallback] Composite planner succeeded" << std::endl;
-                }
+                std::cerr << "[Fallback] CBS exhausted; falling back to decoupled/coupled RRT" << std::endl;
+                result.success = false;
+                result.failure_reason = "cbs_exhausted";
             }
         } else {
             bool all_paths_found = true;
@@ -264,6 +250,45 @@ CipherKinoResult CipherKinoPlanner::plan()
         std::cerr << "Planning failed with exception: " << e.what() << std::endl;
         result.success = false;
         result.failure_reason = std::string("exception: ") + e.what();
+    }
+
+    if (!result.success && !isTimeoutExceeded()) {
+        std::cerr << "[Fallback] CIPHER failed; trying decoupled kinodynamic RRT..." << std::endl;
+        std::vector<size_t> all_robot_indices;
+        for (size_t i = 0; i < robots_.size(); ++i) all_robot_indices.push_back(i);
+
+        KinoPlanningResult dec_result =
+            useDecoupledPlanner(all_robot_indices, starts_, goals_, env_min_, env_max_);
+
+        if (dec_result.solved) {
+            DOUT << "[Fallback] Decoupled kinodynamic RRT succeeded" << std::endl;
+            robot_paths_.resize(robots_.size(), nullptr);
+            for (size_t i = 0; i < robots_.size(); ++i) {
+                guided_planning_results_[i].success = true;
+                guided_planning_results_[i].path    = dec_result.individual_paths[i];
+                robot_paths_[i]                     = dec_result.individual_paths[i];
+            }
+            result.success = true;
+            result.failure_reason = "";
+        } else if (!isTimeoutExceeded()) {
+            std::cerr << "[Fallback] Decoupled RRT failed; trying coupled kinodynamic RRT..." << std::endl;
+            KinoPlanningResult coup_result =
+                useCompositePlanner(all_robot_indices, starts_, goals_, env_min_, env_max_);
+            result.success = coup_result.solved;
+            if (result.success) {
+                DOUT << "[Fallback] Coupled kinodynamic RRT succeeded" << std::endl;
+                robot_paths_.resize(robots_.size(), nullptr);
+                for (size_t i = 0; i < robots_.size(); ++i) {
+                    guided_planning_results_[i].success = true;
+                    guided_planning_results_[i].path    = coup_result.individual_paths[i];
+                    robot_paths_[i]                     = coup_result.individual_paths[i];
+                }
+                result.failure_reason = "";
+            } else {
+                std::cerr << "[Fallback] All fallbacks failed" << std::endl;
+                result.failure_reason = "all_fallbacks_failed";
+            }
+        }
     }
 
     result.planning_time = std::chrono::duration<double>(
@@ -962,6 +987,77 @@ bool CipherKinoPlanner::checkTwoRobotConflict(
 // ============================================================================
 // Conflict Resolution – Top-Level Strategies
 // ============================================================================
+
+KinoPlanningResult CipherKinoPlanner::useDecoupledPlanner(
+    const std::vector<size_t>& robot_indices,
+    const std::vector<std::vector<double>>& subproblem_starts,
+    const std::vector<std::vector<double>>& subproblem_goals,
+    const std::vector<double>& /*subproblem_env_min*/,
+    const std::vector<double>& /*subproblem_env_max*/)
+{
+    DOUT << "Using decoupled kinodynamic planner for " << robot_indices.size() << " robots..." << std::endl;
+
+    KinoPlanningResult result;
+    result.solved = false;
+    result.planning_time = 0.0;
+    result.individual_paths.resize(robot_indices.size(), nullptr);
+
+    auto t_start = std::chrono::steady_clock::now();
+
+    for (size_t i = 0; i < robot_indices.size(); ++i) {
+        size_t r = robot_indices[i];
+        auto robot_si_kino = std::dynamic_pointer_cast<oc::SpaceInformation>(robot_sis_[r]);
+        if (!robot_si_kino) {
+            DOUT << "  Robot " << r << ": no kinodynamic SI" << std::endl;
+            result.planning_time = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - t_start).count();
+            return result;
+        }
+
+        ob::State* start_state = robot_si_kino->getStateSpace()->allocState();
+        robot_si_kino->getStateSpace()->copyFromReals(start_state, subproblem_starts[i]);
+
+        ob::State* goal_state = robot_si_kino->getStateSpace()->allocState();
+        robot_si_kino->getStateSpace()->copyFromReals(goal_state, subproblem_goals[i]);
+
+        auto goal_cond = std::make_shared<ob::GoalState>(robot_si_kino);
+        goal_cond->setState(goal_state);
+        goal_cond->setThreshold(config_.goal_threshold);
+
+        auto pdef = std::make_shared<ob::ProblemDefinition>(robot_si_kino);
+        pdef->addStartState(start_state);
+        pdef->setGoal(goal_cond);
+
+        auto planner = std::make_shared<oc::RRT>(robot_si_kino);
+        planner->setProblemDefinition(pdef);
+        planner->setup();
+
+        ob::PlannerStatus status = planner->solve(
+            ob::timedPlannerTerminationCondition(config_.planning_time_limit));
+
+        robot_si_kino->getStateSpace()->freeState(start_state);
+        robot_si_kino->getStateSpace()->freeState(goal_state);
+
+        if (!(status == ob::PlannerStatus::EXACT_SOLUTION ||
+              status == ob::PlannerStatus::APPROXIMATE_SOLUTION)) {
+            DOUT << "  Robot " << r << ": decoupled RRT failed" << std::endl;
+            result.planning_time = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - t_start).count();
+            return result;
+        }
+
+        auto raw_path = pdef->getSolutionPath()->as<oc::PathControl>();
+        result.individual_paths[i] = std::make_shared<oc::PathControl>(*raw_path);
+        DOUT << "  Robot " << r << ": decoupled RRT solved" << std::endl;
+    }
+
+    result.solved = true;
+    result.planning_time = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - t_start).count();
+    DOUT << "  Decoupled planner solved all " << robot_indices.size()
+         << " robots in " << result.planning_time << "s" << std::endl;
+    return result;
+}
 
 KinoPlanningResult CipherKinoPlanner::useCompositePlanner(
     const std::vector<size_t>& robot_indices,

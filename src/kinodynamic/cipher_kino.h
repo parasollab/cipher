@@ -378,6 +378,12 @@ private:
     // Conflict resolution strategies
     // void updateDecomposition();
     // void expandSubproblem();
+    KinoPlanningResult useDecoupledPlanner(
+        const std::vector<size_t>& robot_indices,
+        const std::vector<std::vector<double>>& subproblem_starts,
+        const std::vector<std::vector<double>>& subproblem_goals,
+        const std::vector<double>& subproblem_env_min,
+        const std::vector<double>& subproblem_env_max);
     KinoPlanningResult useCompositePlanner(
         const std::vector<size_t>& robot_indices,
         const std::vector<std::vector<double>>& subproblem_starts,
