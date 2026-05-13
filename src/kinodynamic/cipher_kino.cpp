@@ -475,6 +475,15 @@ void CipherKinoPlanner::computeGuidedPaths()
                 problem.p_lb, problem.p_ub).release());
         dynobench::load_env(*robot_model, problem);
 
+        // nigh_factory2 dispatches on the dynamics name (e.g. "integrator2_2d"),
+        // but robotType was set to the model filename (e.g. "double_integrator_0").
+        // Override with the lowercase of robot_model->name which matches the dynamics key.
+        {
+            std::string dyn = robot_model->name;
+            std::transform(dyn.begin(), dyn.end(), dyn.begin(), ::tolower);
+            problem.robotType = dyn;
+        }
+
         // YAML start/goal may omit velocity dimensions (e.g. [x,y,theta] for a
         // 5-DOF model). Pad with zeros so nigh's fixed-size key extraction does
         // not read past the end of the vector.

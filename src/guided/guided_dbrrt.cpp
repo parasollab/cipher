@@ -469,7 +469,8 @@ void guided_dbrrtConnect(const dynobench::Problem &problem,
     srand(time(0));
   }
 
-  Eigen::VectorXd x_rand(robot->nx), x_target(robot->nx);
+  Eigen::VectorXd x_rand = Eigen::VectorXd::Zero(robot->nx);
+  Eigen::VectorXd x_target = Eigen::VectorXd::Zero(robot->nx);
   AStarNode *rand_node = new AStarNode;
 
   AStarNode *near_node = nullptr;
@@ -1059,7 +1060,8 @@ void guided_dbrrt(const dynobench::Problem &problem,
     srand(time(0));
   }
 
-  Eigen::VectorXd x_rand(robot->nx), x_target(robot->nx);
+  Eigen::VectorXd x_rand = Eigen::VectorXd::Zero(robot->nx);
+  Eigen::VectorXd x_target = Eigen::VectorXd::Zero(robot->nx);
   AStarNode *rand_node = new AStarNode;
   AStarNode *near_node = nullptr;
   AStarNode *tmp = nullptr;
@@ -1930,9 +1932,14 @@ void sample_guided(Eigen::Ref<Eigen::VectorXd> x,
             std::shared_ptr<DecompositionImpl> decomposition,
             int rid) {
   auto bounds = static_cast<GridDecompositionImpl *>(decomposition.get())->getCellBounds(rid);
-  Eigen::VectorXd lb = Eigen::Map<const Eigen::VectorXd>(bounds.low.data(), bounds.low.size());
-  Eigen::VectorXd ub = Eigen::Map<const Eigen::VectorXd>(bounds.high.data(), bounds.high.size());
-  x = lb + (ub - lb).cwiseProduct(0.5 * (Eigen::VectorXd::Random(lb.size()) + Eigen::VectorXd::Ones(lb.size())));
+  int n = static_cast<int>(bounds.low.size());
+  Eigen::VectorXd lb = Eigen::Map<const Eigen::VectorXd>(bounds.low.data(), n);
+  Eigen::VectorXd ub = Eigen::Map<const Eigen::VectorXd>(bounds.high.data(), n);
+  // Only fill the position slice; zero remaining dims (velocity, etc.) so the
+  // full-state vector stays the correct size for the nearest-neighbor key.
+  x.head(n) = lb + (ub - lb).cwiseProduct(0.5 * (Eigen::VectorXd::Random(n) + Eigen::VectorXd::Ones(n)));
+  if (n < x.size())
+    x.tail(x.size() - n).setZero();
 }
 
 ob::State* eigen_to_ompl_state(const Eigen::Ref<const Eigen::VectorXd> x, std::shared_ptr<Robot> ompl_robot) {

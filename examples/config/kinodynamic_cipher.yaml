@@ -16,3 +16,12 @@ guided_planner_method: "guided_dbrrt"
 do_optimization: false
 solver_id: 0
 region_bounds_weight: 100.0
+
+# unicycle_first_order_sphere_0
+motions_file: "./db-CBS/dynoplan/dynomotions/unicycle1_v0__ispso__2023_04_03__14_56_57.bin.im.bin.im.bin.small5000.msgpack"
+
+# unicycle_second_order_0
+# motions_file: "./db-CBS/dynoplan/dynomotions/unicycle2_v0__ispso__2023_04_03__15_36_01.bin.im.bin.im.bin.small5000.msgpack"
+
+# double_integrator_0
+# motions_file: "./db-CBS/motions/double_integrator_0_sorted.msgpack" 
