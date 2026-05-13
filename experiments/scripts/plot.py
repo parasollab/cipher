@@ -31,6 +31,7 @@ CONFIGS = [
             # 'low_clutter', 'medium_clutter', 'high_clutter', 
             'open_70x70', 'rooms_70x70',
             'low_clutter_70x70', 'medium_clutter_70x70', 'high_clutter_70x70',
+            'boxes_70x70'
         ],
         'methods': ['coupled_rrt', 'decoupled_rrt', 'srrt', 'drrt', 'arc', 'geometric_cipher'],
     },

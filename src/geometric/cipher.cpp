@@ -236,10 +236,19 @@ void CipherGeometricPlanner::loadProblem(
     // Setup decomposition, collision manager, and robots
     setupCollisionManager();
     setupRobots();
-    setupDecomposition();
-    separateStartCells();
-    if (config_.check_transition_feasibility)
+    {
+        auto t_setup = std::chrono::steady_clock::now();
+        setupDecomposition();
+        separateStartCells();
+        resolution_stats_.time_setup_decomposition_seconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - t_setup).count();
+    }
+    if (config_.check_transition_feasibility) {
+        auto t_tf = std::chrono::steady_clock::now();
         computeTransitionFeasibility();
+        resolution_stats_.time_transition_feasibility_seconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - t_tf).count();
+    }
 
     // Build and write visualization header now that robots + decomp are ready
     initVizHeader();
@@ -351,7 +360,10 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
             }
         } else {
             DOUT << "[Phase 3] Checking paths for conflicts..." << std::endl;
+            auto t_chk = std::chrono::steady_clock::now();
             bool conflicts_found = checkPathsForConflicts();
+            resolution_stats_.time_check_conflicts_seconds +=
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - t_chk).count();
             DOUT << "[Phase 3] Conflict checking complete: " << segment_conflicts_.size() << " conflicts found." << std::endl;
 
             // Phase 4: Resolve conflicts
@@ -390,8 +402,11 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
         std::vector<size_t> all_robot_indices;
         for (size_t i = 0; i < robots_.size(); ++i) all_robot_indices.push_back(i);
 
+        auto t_dec = std::chrono::steady_clock::now();
         GeometricPlanningResult dec_result =
             useDecoupledPlanner(all_robot_indices, starts_, goals_, env_min_, env_max_);
+        resolution_stats_.time_decoupled_fallback_seconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - t_dec).count();
 
         resolution_stats_.decoupled_planner_attempts++;
         if (dec_result.solved) {
@@ -401,8 +416,11 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
             result.failure_reason = "";
         } else if (!isTimeoutExceeded()) {
             std::cerr << "[Fallback] Decoupled RRT failed; trying coupled RRT..." << std::endl;
+            auto t_coup = std::chrono::steady_clock::now();
             GeometricPlanningResult coup_result =
                 useCompositePlanner(all_robot_indices, starts_, goals_, env_min_, env_max_);
+            resolution_stats_.time_coupled_fallback_seconds +=
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - t_coup).count();
             result.success = coup_result.solved;
             if (result.success) {
                 DOUT << "[Fallback] Coupled RRT succeeded" << std::endl;
@@ -1394,12 +1412,16 @@ bool CipherGeometricPlanner::resolveConflictWithStrategies(const SegmentConflict
                   << max_expansion_layers << " expansion layers, min "
                   << min_expansion_layer << " expansion layer)..." << std::endl;
 
-        if (resolveWithHierarchicalExpansionRefinement(
+        auto t_hier = std::chrono::steady_clock::now();
+        bool hier_ok = resolveWithHierarchicalExpansionRefinement(
                 conflict,
                 config.max_refinement_levels,
                 max_expansion_layers,
                 min_expansion_layer,
-                log_entry)) {
+                log_entry);
+        resolution_stats_.time_hierarchical_resolution_seconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - t_hier).count();
+        if (hier_ok) {
             DOUT << "  Hierarchical expansion+refinement resolved the conflict" << std::endl;
             return true;
         }
@@ -1419,7 +1441,11 @@ bool CipherGeometricPlanner::resolveConflictWithStrategies(const SegmentConflict
                   << config.max_composite_attempts << " attempts)..." << std::endl;
         resolution_stats_.composite_planner_attempts++;
 
-        if (resolveWithFullProblemCompositePlanner(config.max_composite_attempts, log_entry)) {
+        auto t_fcp = std::chrono::steady_clock::now();
+        bool fcp_ok = resolveWithFullProblemCompositePlanner(config.max_composite_attempts, log_entry);
+        resolution_stats_.time_full_composite_resolution_seconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - t_fcp).count();
+        if (fcp_ok) {
             DOUT << "  Full-problem composite planner resolved the conflict" << std::endl;
             resolution_stats_.composite_planner_successes++;
             return true;
@@ -1678,10 +1704,16 @@ bool CipherGeometricPlanner::refineExpandedRegion(
     // extractReplanningBoundsForExpandedRegion uses locateRegion() which returns
     // top-level cell IDs, so we must pass expanded_regions (not the leaf new_regions).
     PathUpdateInfo update_info_1, update_info_2;
-    if (!extractReplanningBoundsForExpandedRegion(
-            conflict, expanded_regions, update_info_1, update_info_2)) {
-        DOUT << "        Failed to extract replanning bounds" << std::endl;
-        return false;
+    {
+        auto t_eb = std::chrono::steady_clock::now();
+        bool bounds_ok = extractReplanningBoundsForExpandedRegion(
+                conflict, expanded_regions, update_info_1, update_info_2);
+        resolution_stats_.time_extract_bounds_seconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - t_eb).count();
+        if (!bounds_ok) {
+            DOUT << "        Failed to extract replanning bounds" << std::endl;
+            return false;
+        }
     }
 
     // Add refined decomp to viz file — only show new_regions being replaced.
@@ -2024,7 +2056,10 @@ bool CipherGeometricPlanner::refineExpandedRegion(
                 std::vector<size_t> single_robot = {replan_robot_indices[i]};
                 std::vector<GuidedPlanningResult> single_result = {replan_results[i]};
                 PathUpdateInfo& update_info = (replan_to_collision_idx[i] == 0) ? update_info_1 : update_info_2;
+                auto t_ip = std::chrono::steady_clock::now();
                 integrateRefinedPaths(single_robot, single_result, update_info, update_info);
+                resolution_stats_.time_integrate_paths_seconds +=
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t_ip).count();
             }
         }
 
@@ -2071,7 +2106,10 @@ bool CipherGeometricPlanner::refineExpandedRegion(
 
     // Step 6: Re-check collisions
     {
+        auto t_rc = std::chrono::steady_clock::now();
         recheckConflictsFromTimestep(getRecheckStartTimestep(conflict, update_info_1, update_info_2));
+        resolution_stats_.time_recheck_conflicts_seconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - t_rc).count();
     }
 
     freeUpdateInfoStates(robot_1, robot_2, update_info_1, update_info_2);
@@ -2885,10 +2923,20 @@ int main(int argc, char** argv)
         stats["composite_planner_successes"]         = s.composite_planner_successes;
         stats["decoupled_planner_attempts"]          = s.decoupled_planner_attempts;
         stats["decoupled_planner_successes"]         = s.decoupled_planner_successes;
-        stats["time_mapf_seconds"]                   = s.time_mapf_seconds;
-        stats["time_guided_planning_seconds"]        = s.time_guided_planning_seconds;
-        stats["time_decomposition_seconds"]          = s.time_decomposition_seconds;
-        stats["time_conflict_resolution_seconds"]    = s.time_conflict_resolution_seconds;
+        stats["time_setup_decomposition_seconds"]        = s.time_setup_decomposition_seconds;
+        stats["time_transition_feasibility_seconds"]     = s.time_transition_feasibility_seconds;
+        stats["time_mapf_seconds"]                       = s.time_mapf_seconds;
+        stats["time_guided_planning_seconds"]            = s.time_guided_planning_seconds;
+        stats["time_decomposition_seconds"]              = s.time_decomposition_seconds;
+        stats["time_check_conflicts_seconds"]            = s.time_check_conflicts_seconds;
+        stats["time_conflict_resolution_seconds"]        = s.time_conflict_resolution_seconds;
+        stats["time_hierarchical_resolution_seconds"]    = s.time_hierarchical_resolution_seconds;
+        stats["time_full_composite_resolution_seconds"]  = s.time_full_composite_resolution_seconds;
+        stats["time_extract_bounds_seconds"]             = s.time_extract_bounds_seconds;
+        stats["time_integrate_paths_seconds"]            = s.time_integrate_paths_seconds;
+        stats["time_recheck_conflicts_seconds"]          = s.time_recheck_conflicts_seconds;
+        stats["time_decoupled_fallback_seconds"]         = s.time_decoupled_fallback_seconds;
+        stats["time_coupled_fallback_seconds"]           = s.time_coupled_fallback_seconds;
         output["resolution_stats"] = stats;
     }
 
