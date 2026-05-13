@@ -1610,9 +1610,69 @@ bool CipherKinoPlanner::refineExpandedRegion(
     // Without this, the same robot would be replanned and integrated twice, corrupting the path.
     bool is_single_robot = (robot_1 == robot_2);
 
+    // Timestep alignment: when the two robots enter the conflict region at different global
+    // timesteps, CBS would otherwise assume both start simultaneously at t=0, producing
+    // coordination that is wrong in global time. Fix: advance the early robot's CBS start
+    // to the sub-cell it occupies at max(t1,t2) — the timestep when the late robot enters.
+    // locateSubRegion() projects the continuous state into the refined decomposition cells,
+    // giving the early robot's progress without a separate A* search.
+    if (!is_single_robot) {
+        int t1 = update_info_1.start_timestep;
+        int t2 = update_info_2.start_timestep;
+        int delta_t = std::abs(t2 - t1);
+
+        if (delta_t > 0) {
+            int max_ts = std::max(t1, t2);
+            bool robot1_enters_first = (t1 <= t2);
+            size_t early_robot_idx = robot1_enters_first ? robot_1 : robot_2;
+            PathUpdateInfo& early_info = robot1_enters_first ? update_info_1 : update_info_2;
+
+            ob::State* aligned = getStateAtTimestep(early_robot_idx, max_ts);
+            if (aligned) {
+                int aligned_sub_region = decomp_->locateSubRegion(aligned);
+                int aligned_top_region = decomp_->locateRegion(aligned);
+                std::set<int> expanded_set(expanded_regions.begin(), expanded_regions.end());
+                bool in_region = (expanded_set.count(aligned_top_region) > 0) && (aligned_sub_region >= 0);
+
+                if (in_region) {
+                    early_info.aligned_start_timestep = max_ts;
+                    early_info.aligned_start_state = aligned;
+                    DOUT << "        Timestep alignment: delta_t=" << delta_t
+                         << ", early robot " << early_robot_idx
+                         << " CBS start = sub-cell " << aligned_sub_region
+                         << " (t=" << max_ts << ")" << std::endl;
+                } else {
+                    robots_[early_robot_idx]->getSpaceInformation()->freeState(aligned);
+                    DOUT << "        Timestep alignment skipped: early robot " << early_robot_idx
+                         << " already exited region by t=" << max_ts << std::endl;
+                }
+            }
+        }
+    }
+
     // Determine which robots need replanning (stationary robots have entry == exit timestep)
     bool robot_1_stationary = (update_info_1.start_timestep == update_info_1.end_timestep);
     bool robot_2_stationary = is_single_robot ? true : (update_info_2.start_timestep == update_info_2.end_timestep);
+
+    // Degenerate alignment case: if the early robot's aligned sub-cell equals its exit sub-cell,
+    // it has already traversed the entire conflict region before the late robot arrives.
+    // Skip its CBS replanning — only the late robot needs guidance.
+    if (!is_single_robot) {
+        auto earlyRobotAlreadyExited = [&](const PathUpdateInfo& info) -> bool {
+            if (!info.aligned_start_state) return false;
+            int aligned_sub = decomp_->locateSubRegion(info.aligned_start_state);
+            int exit_sub    = decomp_->locateSubRegion(info.region_exit_state);
+            return (aligned_sub < 0) || (aligned_sub == exit_sub);
+        };
+        if (earlyRobotAlreadyExited(update_info_1)) {
+            DOUT << "        Robot " << robot_1 << " already past conflict region at alignment time, skipping replan" << std::endl;
+            robot_1_stationary = true;
+        }
+        if (earlyRobotAlreadyExited(update_info_2)) {
+            DOUT << "        Robot " << robot_2 << " already past conflict region at alignment time, skipping replan" << std::endl;
+            robot_2_stationary = true;
+        }
+    }
 
     if (robot_1_stationary && robot_2_stationary) {
         // Both robots are stationary — can't replan either one
@@ -1632,16 +1692,30 @@ bool CipherKinoPlanner::refineExpandedRegion(
 
     if (!robot_1_stationary) {
         replan_robot_indices.push_back(robot_1);
-        replan_starts.push_back(update_info_1.planning_entry_state);
-        replan_hl_starts.push_back(update_info_1.region_entry_state);
+        // Use aligned_start_state when set: the early robot's CBS start is the sub-cell it
+        // has reached at max(t1,t2), so CBS is synchronized with the late robot's entry.
+        ob::State* hl_start   = update_info_1.aligned_start_state
+                                ? update_info_1.aligned_start_state
+                                : update_info_1.region_entry_state;
+        ob::State* kino_start = update_info_1.aligned_start_state
+                                ? update_info_1.aligned_start_state
+                                : update_info_1.planning_entry_state;
+        replan_starts.push_back(kino_start);
+        replan_hl_starts.push_back(hl_start);
         replan_goals.push_back(update_info_1.planning_exit_state);
         replan_hl_goals.push_back(update_info_1.region_exit_state);
         replan_to_collision_idx.push_back(0);
     }
     if (!robot_2_stationary) {
         replan_robot_indices.push_back(robot_2);
-        replan_starts.push_back(update_info_2.planning_entry_state);
-        replan_hl_starts.push_back(update_info_2.region_entry_state);
+        ob::State* hl_start   = update_info_2.aligned_start_state
+                                ? update_info_2.aligned_start_state
+                                : update_info_2.region_entry_state;
+        ob::State* kino_start = update_info_2.aligned_start_state
+                                ? update_info_2.aligned_start_state
+                                : update_info_2.planning_entry_state;
+        replan_starts.push_back(kino_start);
+        replan_hl_starts.push_back(hl_start);
         replan_goals.push_back(update_info_2.planning_exit_state);
         replan_hl_goals.push_back(update_info_2.region_exit_state);
         replan_to_collision_idx.push_back(1);
@@ -2242,6 +2316,7 @@ void CipherKinoPlanner::freeUpdateInfoStates(
         freeIfNotNull(si, update_info_1.region_exit_state);
         freeIfNotNull(si, update_info_1.planning_entry_state);
         freeIfNotNull(si, update_info_1.planning_exit_state);
+        freeIfNotNull(si, update_info_1.aligned_start_state);
     }
     if (robot_2 < robot_sis_.size()) {
         auto* si = robot_sis_[robot_2].get();
@@ -2249,6 +2324,7 @@ void CipherKinoPlanner::freeUpdateInfoStates(
         freeIfNotNull(si, update_info_2.region_exit_state);
         freeIfNotNull(si, update_info_2.planning_entry_state);
         freeIfNotNull(si, update_info_2.planning_exit_state);
+        freeIfNotNull(si, update_info_2.aligned_start_state);
     }
 }
 
@@ -2317,11 +2393,18 @@ void CipherKinoPlanner::integrateRefinedPaths(
         if (original_path && result.path) {
             auto spliced_path = std::make_shared<oc::PathControl>(si);
 
-            // Part 1: copy original up to and including the entry state
+            // Part 1: copy original up to and including the splice entry state.
+            // When aligned_start_state is set (timestep-alignment case), splice at that state:
+            // the early robot's original trajectory is preserved from its region entry through
+            // max(t1,t2), then the CBS-guided kinodynamic path takes over from there.
+            ob::State* splice_state = update_info.aligned_start_state
+                                      ? update_info.aligned_start_state
+                                      : update_info.planning_entry_state;
+
             size_t entry_state_idx = 0;
             bool entry_found = false;
             for (size_t s = 0; s < original_path->getStateCount(); ++s) {
-                if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_entry_state) < 1e-3) {
+                if (si->getStateSpace()->distance(original_path->getState(s), splice_state) < 1e-3) {
                     DOUT << "!!Found Start!!" << std::endl;
                     entry_state_idx = s;
                     entry_found = true;
@@ -2330,7 +2413,7 @@ void CipherKinoPlanner::integrateRefinedPaths(
             }
             if (!entry_found) {
                 throw std::runtime_error(
-                    "integrateRefinedPaths: planning_entry_state not found in original path "
+                    "integrateRefinedPaths: splice state not found in original path "
                     "(robot " + std::to_string(robot_idx) + "). Likely floating-point drift "
                     "from prior splices or state-pointer aliasing.");
             }
@@ -2380,9 +2463,52 @@ void CipherKinoPlanner::integrateRefinedPaths(
     }
 }
 
-void CipherKinoPlanner::recheckConflictsFromTimestep(int /*start_timestep*/)
+void CipherKinoPlanner::recheckConflictsFromTimestep(int start_timestep)
 {
-    checkPathsForConflicts();
+    DOUT << "Re-checking conflicts from timestep " << start_timestep << std::endl;
+
+    segment_conflicts_.clear();
+
+    if (robot_paths_.empty()) return;
+
+    int max_timestep = 0;
+    for (size_t r = 0; r < robot_paths_.size(); ++r) {
+        if (!robot_paths_[r] || robot_paths_[r]->getStateCount() == 0) continue;
+        const auto& path = robot_paths_[r];
+        auto* oc_si = dynamic_cast<oc::SpaceInformation*>(robot_sis_[r].get());
+        double step_size = oc_si ? oc_si->getPropagationStepSize() : 1.0;
+        int total_steps = 0;
+        for (size_t k = 0; k < path->getControlCount(); ++k)
+            total_steps += (int)std::round(path->getControlDuration(k) / step_size);
+        max_timestep = std::max(max_timestep, total_steps);
+    }
+
+    if (max_timestep == 0 || robots_.size() < 2) return;
+
+    for (int timestep = start_timestep; timestep < max_timestep; ++timestep) {
+        for (size_t i = 0; i < robots_.size(); ++i) {
+            ob::State* si = getStateAtTimestep(i, timestep);
+            if (!si) continue;
+            for (size_t j = i + 1; j < robots_.size(); ++j) {
+                ob::State* sj = getStateAtTimestep(j, timestep);
+                if (!sj) continue;
+                size_t part_i, part_j;
+                if (checkTwoRobotConflict(i, si, j, sj, part_i, part_j)) {
+                    SegmentConflict conflict;
+                    conflict.type = SegmentConflict::ROBOT_ROBOT;
+                    conflict.robot_index_1 = i;
+                    conflict.robot_index_2 = j;
+                    conflict.timestep = timestep;
+                    conflict.part_index_1 = part_i;
+                    conflict.part_index_2 = part_j;
+                    segment_conflicts_.push_back(conflict);
+                }
+            }
+        }
+    }
+
+    vizEmitConflicts(segment_conflicts_);
+    DOUT << "    Total conflicts found: " << segment_conflicts_.size() << std::endl;
 }
 
 int CipherKinoPlanner::getRecheckStartTimestep(

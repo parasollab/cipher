@@ -1684,9 +1684,72 @@ bool CipherGeometricPlanner::refineExpandedRegion(
     // Without this, the same robot would be replanned and integrated twice, corrupting the path.
     bool is_single_robot = (robot_1 == robot_2);
 
+    // Timestep alignment: when the two robots enter the conflict region at different global
+    // timesteps, CBS would otherwise assume both start simultaneously at t=0, producing
+    // coordination that is wrong in global time. Fix: advance the early robot's CBS start
+    // to the sub-cell it occupies at max(t1,t2) — the timestep when the late robot enters.
+    // locateSubRegion() projects the continuous state into the refined decomposition cells,
+    // giving the early robot's progress without a separate A* search.
+    if (!is_single_robot) {
+        int t1 = update_info_1.start_timestep;
+        int t2 = update_info_2.start_timestep;
+        int delta_t = std::abs(t2 - t1);
+
+        if (delta_t > 0) {
+            int max_ts = std::max(t1, t2);
+            bool robot1_enters_first = (t1 <= t2);
+            size_t early_robot_idx = robot1_enters_first ? robot_1 : robot_2;
+            PathUpdateInfo& early_info = robot1_enters_first ? update_info_1 : update_info_2;
+
+            // getStateAtTimestep() returns a non-owning pointer into the path, so we
+            // must allocate and copy to match PathUpdateInfo ownership convention.
+            ob::State* raw = getStateAtTimestep(early_robot_idx, max_ts);
+            if (raw) {
+                int aligned_sub_region = decomp_->locateSubRegion(raw);
+                int aligned_top_region = decomp_->locateRegion(raw);
+                std::set<int> expanded_set(expanded_regions.begin(), expanded_regions.end());
+                bool in_region = (expanded_set.count(aligned_top_region) > 0) && (aligned_sub_region >= 0);
+
+                if (in_region) {
+                    auto si = robots_[early_robot_idx]->getSpaceInformation();
+                    early_info.aligned_start_state = si->getStateSpace()->allocState();
+                    si->copyState(early_info.aligned_start_state, raw);
+                    early_info.aligned_start_timestep = max_ts;
+                    DOUT << "        Timestep alignment: delta_t=" << delta_t
+                         << ", early robot " << early_robot_idx
+                         << " CBS start = sub-cell " << aligned_sub_region
+                         << " (t=" << max_ts << ")" << std::endl;
+                } else {
+                    DOUT << "        Timestep alignment skipped: early robot " << early_robot_idx
+                         << " already exited region by t=" << max_ts << std::endl;
+                }
+            }
+        }
+    }
+
     // Determine which robots need replanning (stationary robots have entry == exit timestep)
     bool robot_1_stationary = (update_info_1.start_timestep == update_info_1.end_timestep);
     bool robot_2_stationary = is_single_robot ? true : (update_info_2.start_timestep == update_info_2.end_timestep);
+
+    // Degenerate alignment case: if the early robot's aligned sub-cell equals its exit sub-cell,
+    // it has already traversed the entire conflict region before the late robot arrives.
+    // Skip its CBS replanning — only the late robot needs guidance.
+    if (!is_single_robot) {
+        auto earlyRobotAlreadyExited = [&](const PathUpdateInfo& info) -> bool {
+            if (!info.aligned_start_state) return false;
+            int aligned_sub = decomp_->locateSubRegion(info.aligned_start_state);
+            int exit_sub    = decomp_->locateSubRegion(info.region_exit_state);
+            return (aligned_sub < 0) || (aligned_sub == exit_sub);
+        };
+        if (earlyRobotAlreadyExited(update_info_1)) {
+            DOUT << "        Robot " << robot_1 << " already past conflict region at alignment time, skipping replan" << std::endl;
+            robot_1_stationary = true;
+        }
+        if (earlyRobotAlreadyExited(update_info_2)) {
+            DOUT << "        Robot " << robot_2 << " already past conflict region at alignment time, skipping replan" << std::endl;
+            robot_2_stationary = true;
+        }
+    }
 
     if (robot_1_stationary && robot_2_stationary) {
         // Both robots are stationary — can't replan either one
@@ -1706,16 +1769,30 @@ bool CipherGeometricPlanner::refineExpandedRegion(
 
     if (!robot_1_stationary) {
         replan_robot_indices.push_back(robot_1);
-        replan_starts.push_back(update_info_1.planning_entry_state);
-        replan_hl_starts.push_back(update_info_1.region_entry_state);
+        // Use aligned_start_state when set: the early robot's CBS start is the sub-cell it
+        // has reached at max(t1,t2), so CBS is synchronized with the late robot's entry.
+        ob::State* hl_start   = update_info_1.aligned_start_state
+                                ? update_info_1.aligned_start_state
+                                : update_info_1.region_entry_state;
+        ob::State* kino_start = update_info_1.aligned_start_state
+                                ? update_info_1.aligned_start_state
+                                : update_info_1.planning_entry_state;
+        replan_starts.push_back(kino_start);
+        replan_hl_starts.push_back(hl_start);
         replan_goals.push_back(update_info_1.planning_exit_state);
         replan_hl_goals.push_back(update_info_1.region_exit_state);
         replan_to_collision_idx.push_back(0);
     }
     if (!robot_2_stationary) {
         replan_robot_indices.push_back(robot_2);
-        replan_starts.push_back(update_info_2.planning_entry_state);
-        replan_hl_starts.push_back(update_info_2.region_entry_state);
+        ob::State* hl_start   = update_info_2.aligned_start_state
+                                ? update_info_2.aligned_start_state
+                                : update_info_2.region_entry_state;
+        ob::State* kino_start = update_info_2.aligned_start_state
+                                ? update_info_2.aligned_start_state
+                                : update_info_2.planning_entry_state;
+        replan_starts.push_back(kino_start);
+        replan_hl_starts.push_back(hl_start);
         replan_goals.push_back(update_info_2.planning_exit_state);
         replan_hl_goals.push_back(update_info_2.region_exit_state);
         replan_to_collision_idx.push_back(1);
@@ -2104,6 +2181,15 @@ void CipherGeometricPlanner::freeUpdateInfoStates(
     PathUpdateInfo& update_info_1,
     PathUpdateInfo& update_info_2) {
     DOUT << "Freeing update info states..." << std::endl;
+    // The other PathUpdateInfo states are cached in robot_pair_refinement_info and must
+    // not be freed here. aligned_start_state is allocated fresh each call so we free it.
+    auto freeAligned = [](ob::SpaceInformation* si, ob::State*& s) {
+        if (s) { si->freeState(s); s = nullptr; }
+    };
+    if (robot_1 < robot_sis_.size())
+        freeAligned(robot_sis_[robot_1].get(), update_info_1.aligned_start_state);
+    if (robot_2 < robot_sis_.size())
+        freeAligned(robot_sis_[robot_2].get(), update_info_2.aligned_start_state);
 }
 
 // Private helpers for all conflict strategies
@@ -2362,11 +2448,18 @@ void CipherGeometricPlanner::integrateRefinedPaths(
         if (original_path && result.path) {
             auto spliced_path = std::make_shared<og::PathGeometric>(si);
 
-            // Part 1: copy original up to and including the entry state
+            // Part 1: copy original up to and including the splice entry state.
+            // When aligned_start_state is set (timestep-alignment case), splice at that state:
+            // the early robot's original trajectory is preserved from its region entry through
+            // max(t1,t2), then the CBS-guided path takes over from there.
+            ob::State* splice_state = update_info.aligned_start_state
+                                      ? update_info.aligned_start_state
+                                      : update_info.planning_entry_state;
+
             size_t entry_state_idx = 0;
             bool entry_found = false;
             for (size_t s = 0; s < original_path->getStateCount(); ++s) {
-                if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_entry_state) < 1e-3) {
+                if (si->getStateSpace()->distance(original_path->getState(s), splice_state) < 1e-3) {
                     DOUT << "!!Found Start!!" << std::endl;
                     entry_state_idx = s;
                     entry_found = true;
@@ -2375,7 +2468,7 @@ void CipherGeometricPlanner::integrateRefinedPaths(
             }
             if (!entry_found) {
                 throw std::runtime_error(
-                    "integrateRefinedPaths: planning_entry_state not found in original path "
+                    "integrateRefinedPaths: splice state not found in original path "
                     "(robot " + std::to_string(robot_idx) + "). Likely floating-point drift "
                     "from prior splices or state-pointer aliasing.");
             }

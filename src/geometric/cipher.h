@@ -161,6 +161,11 @@ struct PathUpdateInfo {
     ob::State* region_exit_state;   // last state inside the expanded region
     ob::State* planning_entry_state;    // last state outside the expanded region (before entering)
     ob::State* planning_exit_state;     // first state outside the expanded region (after exiting)
+    // Set for the early robot when the two robots enter the conflict region at different timesteps.
+    // aligned_start_state is an allocState() copy of the early robot's state at max(t1,t2),
+    // projected into the refined decomposition via locateSubRegion() to find its sub-cell progress.
+    int aligned_start_timestep = -1;
+    ob::State* aligned_start_state = nullptr;
 };
 
 // ============================================================================
