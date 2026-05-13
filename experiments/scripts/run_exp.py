@@ -225,7 +225,20 @@ def main():
     parser.add_argument('--seeds', type=int, default=10, help="Number of seeds per configuration (default: 10)")
     parser.add_argument('--timeout', type=float, default=600.0, help="Planner timeout in seconds (default: 600)")
     parser.add_argument('--overwrite', action='store_true', help="Overwrite the output file instead of appending")
+    parser.add_argument('--config', nargs='+', metavar='METHOD:PATH',
+                        help="Custom config file(s) for specific methods, e.g. kcbs:/path/to/config.yaml. "
+                             "Methods not listed use their default config.")
     args = parser.parse_args()
+
+    custom_configs = {}
+    if args.config:
+        for entry in args.config:
+            if ':' not in entry:
+                parser.error(f"--config entries must be METHOD:PATH, got: {entry!r}")
+            method_name, _, path = entry.partition(':')
+            if method_name not in METHOD_EXECUTABLES:
+                parser.error(f"Unknown method in --config: {method_name!r}")
+            custom_configs[method_name] = path
 
     methods = [{'name': m, 'executable': str(project_root / 'build' / METHOD_EXECUTABLES[m])} for m in args.methods]
 
@@ -248,13 +261,15 @@ def main():
                 continue
             print(f"Discovered robot counts for '{scenario}': {robot_counts}")
         for method in methods:
+            default_config = str(project_root / 'examples' / 'config' / f'{method["name"]}.yaml')
+            config_file = custom_configs.get(method['name'], default_config)
             run_method(
                 method['name'],
                 scenario,
                 method['executable'],
                 str(project_root / 'experiments' / scenario / scenario),
                 str(project_root / 'experiments' / 'results' / scenario / f'{method["name"]}'),
-                str(project_root / 'examples' / 'config' / f'{method["name"]}.yaml'),
+                config_file,
                 timeout=args.timeout,
                 num_robots=robot_counts,
                 num_seeds=args.seeds,

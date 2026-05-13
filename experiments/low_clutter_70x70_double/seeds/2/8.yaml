@@ -1,0 +1,26 @@
+environment:
+  max: [70.0, 70.0]
+  min: [0.0, 0.0]
+  obstacles:
+  - center: [30.8, 30.8]
+    size: [5.6, 5.6]
+    type: box
+  - center: [11.2, 53.2]
+    size: [5.6, 5.6]
+    type: box
+  - center: [53.2, 16.8]
+    size: [5.6, 5.6]
+    type: box
+  - center: [42.0, 56.0]
+    size: [5.6, 5.6]
+    type: box
+  - center: [22.4, 7.0]
+    size: [5.6, 5.6]
+    type: box
+robots:
+- goal: [30.67036655665907, 26.130598545327903, 0.0, 0.0]
+  start: [55.111860826656006, 60.78178686522625, 0.0, 0.0]
+  type: double_integrator_0
+- goal: [13.025789511358717, 13.662359058630454, 0.0, 0.0]
+  start: [33.533892155141366, 16.97224451240235, 0.0, 0.0]
+  type: double_integrator_0

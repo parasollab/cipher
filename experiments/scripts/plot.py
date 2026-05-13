@@ -31,6 +31,7 @@ CONFIGS = [
             # 'low_clutter', 'medium_clutter', 'high_clutter', 
             'open_70x70', 'rooms_70x70',
             'low_clutter_70x70', 'medium_clutter_70x70', 'high_clutter_70x70',
+            'boxes_70x70'
         ],
         'methods': ['coupled_rrt', 'decoupled_rrt', 'srrt', 'drrt', 'arc', 'geometric_cipher'],
     },
@@ -46,6 +47,10 @@ CONFIGS = [
             # 'low_clutter_double', 'medium_clutter_double', 'high_clutter_double',
             'open_70x70', 'rooms_70x70',
             'low_clutter_70x70', 'medium_clutter_70x70', 'high_clutter_70x70',
+            'open_70x70_second', 'rooms_70x70_second',
+            'low_clutter_70x70_second', 'medium_clutter_70x70_second', 'high_clutter_70x70_second',
+            'open_70x70_double', 'rooms_70x70_double',
+            'low_clutter_70x70_double', 'medium_clutter_70x70_double', 'high_clutter_70x70_double',
         ],
         'methods': ['kino_coupled_rrt', 'kino_decoupled_rrt', 'kcbs', 'k_arc', 'kinodynamic_cipher'],
     },

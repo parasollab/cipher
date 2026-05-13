@@ -239,6 +239,26 @@ struct ResolutionStats {
 
     // Detailed per-conflict resolution log
     std::vector<ConflictResolutionEntry> conflict_log;
+
+    // Phase timing (seconds; accumulated across retries)
+    // Setup
+    double time_setup_decomposition_seconds = 0.0;
+    double time_transition_feasibility_seconds = 0.0;
+    // Main loop
+    double time_mapf_seconds = 0.0;
+    double time_guided_planning_seconds = 0.0;
+    double time_decomposition_seconds = 0.0;
+    double time_check_conflicts_seconds = 0.0;
+    double time_conflict_resolution_seconds = 0.0;
+    // Within conflict resolution
+    double time_hierarchical_resolution_seconds = 0.0;
+    double time_full_composite_resolution_seconds = 0.0;
+    double time_extract_bounds_seconds = 0.0;
+    double time_integrate_paths_seconds = 0.0;
+    double time_recheck_conflicts_seconds = 0.0;
+    // Fallbacks
+    double time_decoupled_fallback_seconds = 0.0;
+    double time_coupled_fallback_seconds = 0.0;
 };
 
 // ============================================================================

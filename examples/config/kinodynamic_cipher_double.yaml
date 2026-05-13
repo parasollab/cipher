@@ -1,0 +1,27 @@
+timelimit: 600
+max_total_time: 0
+seed: -1
+region_size: 10
+robot_cell_size_ratio: 1.8
+cbs_capacity: 1
+max_obstacle_volume_percent: 0.5
+max_initial_extensions: 1000
+max_blocked_edge_retries: 5
+max_no_progress_iters: 20
+restrict_sampling_to_cell: false
+cbs_timeout: 1.0
+goal_threshold: 1.0
+
+guided_planner_method: "guided_dbrrt"
+do_optimization: false
+solver_id: 0
+region_bounds_weight: 100.0
+
+# unicycle_first_order_sphere_0
+# motions_file: "./db-CBS/dynoplan/dynomotions/unicycle1_v0__ispso__2023_04_03__14_56_57.bin.im.bin.im.bin.small5000.msgpack"
+
+# unicycle_second_order_0
+# motions_file: "./db-CBS/dynoplan/dynomotions/unicycle2_v0__ispso__2023_04_03__15_36_01.bin.im.bin.im.bin.small5000.msgpack"
+
+# double_integrator_0
+motions_file: "./db-CBS/motions/double_integrator_0_sorted.msgpack" 
