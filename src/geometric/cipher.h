@@ -234,6 +234,12 @@ struct ResolutionStats {
 
     // Detailed per-conflict resolution log
     std::vector<ConflictResolutionEntry> conflict_log;
+
+    // Phase timing (seconds; accumulated across retries)
+    double time_mapf_seconds = 0.0;
+    double time_guided_planning_seconds = 0.0;
+    double time_decomposition_seconds = 0.0;
+    double time_conflict_resolution_seconds = 0.0;
 };
 
 // ============================================================================

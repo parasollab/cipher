@@ -270,13 +270,20 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
 
             bool cbs_ok = false;
             try {
+                auto t_mapf = std::chrono::steady_clock::now();
                 computeHighLevelPaths();
+                resolution_stats_.time_mapf_seconds +=
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t_mapf).count();
                 cbs_ok = true;
             } catch (const std::exception& e) {
                 if (blocked_edge_attempts == 0) {
                     std::cerr << "[Phase 1] CBS failed (" << e.what()
                               << "); decomposing all leaf cells one level and retrying" << std::endl;
-                    if (!decomposeAllLeavesOneLevel()) {
+                    auto t_decomp = std::chrono::steady_clock::now();
+                    bool decomp_ok = decomposeAllLeavesOneLevel();
+                    resolution_stats_.time_decomposition_seconds +=
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - t_decomp).count();
+                    if (!decomp_ok) {
                         std::cerr << "[Phase 1] All cells at maximum decomposition depth; falling back to composite planner" << std::endl;
                         cbs_exhausted = true;
                         break;
@@ -304,7 +311,12 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
             size_t prev_forbidden_count = forbidden_edges_.size();
 
             DOUT << "[Phase 2] Computing guided paths..." << std::endl;
-            computeGuidedPaths();
+            {
+                auto t_guided = std::chrono::steady_clock::now();
+                computeGuidedPaths();
+                resolution_stats_.time_guided_planning_seconds +=
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t_guided).count();
+            }
             DOUT << "[Phase 2] Guided paths computed" << std::endl;
 
             if (isTimeoutExceeded()) {
@@ -345,7 +357,10 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
             // Phase 4: Resolve conflicts
             if (conflicts_found) {
                 DOUT << "[Phase 5] Resolving conflicts..." << std::endl;
+                auto t_cr = std::chrono::steady_clock::now();
                 bool conflicts_resolved = resolveConflicts();
+                resolution_stats_.time_conflict_resolution_seconds +=
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t_cr).count();
                 if (!conflicts_resolved) {
                     std::cerr << "Planning failed: could not resolve all conflicts" << std::endl;
                     result.success = false;
@@ -1628,10 +1643,15 @@ bool CipherGeometricPlanner::refineExpandedRegion(
               << expanded_regions.size() << " total" << std::endl;
 
     // Step 1: Refine the leaf cells in the global decomposition.
-    for (int r : new_regions) {
-        if (decomp_->getDecompositionDepth(r) >= max_levels)
-            continue;
-        decomp_->Decompose(r);
+    {
+        auto t_decomp = std::chrono::steady_clock::now();
+        for (int r : new_regions) {
+            if (decomp_->getDecompositionDepth(r) >= max_levels)
+                continue;
+            decomp_->Decompose(r);
+        }
+        resolution_stats_.time_decomposition_seconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - t_decomp).count();
     }
     DOUT << "        Decomposed " << new_regions.size() << " cell(s) in global decomposition" << std::endl;
 
@@ -2865,6 +2885,10 @@ int main(int argc, char** argv)
         stats["composite_planner_successes"]         = s.composite_planner_successes;
         stats["decoupled_planner_attempts"]          = s.decoupled_planner_attempts;
         stats["decoupled_planner_successes"]         = s.decoupled_planner_successes;
+        stats["time_mapf_seconds"]                   = s.time_mapf_seconds;
+        stats["time_guided_planning_seconds"]        = s.time_guided_planning_seconds;
+        stats["time_decomposition_seconds"]          = s.time_decomposition_seconds;
+        stats["time_conflict_resolution_seconds"]    = s.time_conflict_resolution_seconds;
         output["resolution_stats"] = stats;
     }
 
