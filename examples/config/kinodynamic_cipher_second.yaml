@@ -10,7 +10,7 @@ max_blocked_edge_retries: 5
 max_no_progress_iters: 20
 restrict_sampling_to_cell: false
 cbs_timeout: 1.0
-goal_threshold: 1.0
+goal_threshold: 0.5
 
 guided_planner_method: "guided_dbrrt"
 do_optimization: false

@@ -13,5 +13,5 @@ restrict_sampling_to_cell: false
 cbs_timeout: 1.0
 check_transition_feasibility: true
 transition_feasibility_robot_size_multiplier: 1.2
-goal_bias: 0.1
-goal_threshold: 1.0
+goal_bias: 0.3
+goal_threshold: 0.1
