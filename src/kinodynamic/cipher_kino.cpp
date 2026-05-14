@@ -512,45 +512,48 @@ void CipherKinoPlanner::computeGuidedPaths()
             /*shuffle=*/false, options_dbrrt.check_cols);
         options_dbrrt.motions_ptr = &motions;
 
-        // Run guided kinodynamic planner
-        dynobench::Trajectory traj_out;
-        dynobench::Info_out out_info;
+        // Run guided kinodynamic planner (with one retry on failure)
         dynoplan::Options_trajopt options_trajopt = config_.options_trajopt;
         options_trajopt.region_bounds_weight = config_.region_bounds_weight;
-        // options_trajopt.max_iter = 100;
-        // options_trajopt.init_reg = 10e2;
-        // options_trajopt.states_reg = true;
-        // options_trajopt.use_finite_diff = true;
-        // options_trajopt.time_ref = 0.1;
 
-        try {
-            if (config_.guided_planner_method == "guided_idbrrt")
-                dynoplan::guided_idbrrt(problem, robot_model, options_dbrrt, options_trajopt,
-                    robots_[robot_idx], decomp_, high_level_paths_[robot_idx],
-                    traj_out, out_info);
-            else if (config_.guided_planner_method == "guided_dbrrt")
-                dynoplan::guided_dbrrt(problem, robot_model, options_dbrrt, options_trajopt,
-                    robots_[robot_idx], decomp_, high_level_paths_[robot_idx],
-                    traj_out, out_info);
-        } catch (const std::exception& e) {
-            DOUT << "  Robot " << robot_idx << ": guided_idbrrt threw: " << e.what() << std::endl;
-            continue;
+        bool success = false;
+        for (int attempt = 0; attempt < 1 && !success; ++attempt) {
+            if (attempt > 0)
+                DOUT << "  Robot " << robot_idx << ": retrying guided planner (attempt " << attempt + 1 << ")" << std::endl;
+
+            dynobench::Trajectory traj_out;
+            dynobench::Info_out out_info;
+
+            try {
+                if (config_.guided_planner_method == "guided_idbrrt")
+                    dynoplan::guided_idbrrt(problem, robot_model, options_dbrrt, options_trajopt,
+                        robots_[robot_idx], decomp_, high_level_paths_[robot_idx],
+                        traj_out, out_info);
+                else if (config_.guided_planner_method == "guided_dbrrt")
+                    dynoplan::guided_dbrrt(problem, robot_model, options_dbrrt, options_trajopt,
+                        robots_[robot_idx], decomp_, high_level_paths_[robot_idx],
+                        traj_out, out_info);
+            } catch (const std::exception& e) {
+                DOUT << "  Robot " << robot_idx << ": guided planner threw: " << e.what() << std::endl;
+                continue;
+            }
+
+            success = (out_info.solved_raw || out_info.solved) && !traj_out.states.empty();
+            if (success) {
+                // Use optimized trajectory if available, otherwise raw
+                if (out_info.solved)
+                    DOUT << "!!!!!!DBRRT OPTIMIZATION SOLVED!!!!!!" << std::endl;
+                else
+                    DOUT << "!!!!!!DBRRT OPTIMIZATION NOT SOLVED!!!!!!" << std::endl;
+                const auto& final_traj = (!out_info.trajs_opt.empty()) ? out_info.trajs_opt[0] : traj_out;
+                guided_planning_results_[robot_idx].path = trajectoryToPathControl(final_traj, robot_si);
+                guided_planning_results_[robot_idx].success = (guided_planning_results_[robot_idx].path != nullptr);
+                DOUT << "  Robot " << robot_idx << ": solved with "
+                     << guided_planning_results_[robot_idx].path->getStateCount() << " states" << std::endl;
+            }
         }
-
-        bool success = (out_info.solved_raw || out_info.solved) && !traj_out.states.empty();
-        if (success) {
-            // Use optimized trajectory if available, otherwise raw
-            if (out_info.solved)
-                DOUT << "!!!!!!DBRRT OPTIMIZATION SOLVED!!!!!!" << std::endl;
-            else
-                DOUT << "!!!!!!DBRRT OPTIMIZATION NOT SOLVED!!!!!!" << std::endl;
-            const auto& final_traj = (!out_info.trajs_opt.empty()) ? out_info.trajs_opt[0] : traj_out;
-            guided_planning_results_[robot_idx].path = trajectoryToPathControl(final_traj, robot_si);
-            guided_planning_results_[robot_idx].success = (guided_planning_results_[robot_idx].path != nullptr);
-            DOUT << "  Robot " << robot_idx << ": solved with "
-                 << guided_planning_results_[robot_idx].path->getStateCount() << " states" << std::endl;
-        } else {
-            DOUT << "  Robot " << robot_idx << ": FAILED" << std::endl;
+        if (!success) {
+            DOUT << "  Robot " << robot_idx << ": FAILED after retry" << std::endl;
         }
     }
 
@@ -1315,20 +1318,20 @@ bool CipherKinoPlanner::resolveConflictWithStrategies(
     }
 
     // Strategy 2: Full-Problem Composite Planner (ALL robots, original starts/goals)
-    if (config.max_composite_attempts > 0) {
-        DOUT << "  Trying full-problem composite planner (max "
-                  << config.max_composite_attempts << " attempts)..." << std::endl;
-        resolution_stats_.composite_planner_attempts++;
+    // if (config.max_composite_attempts > 0) {
+    //     DOUT << "  Trying full-problem composite planner (max "
+    //               << config.max_composite_attempts << " attempts)..." << std::endl;
+    //     resolution_stats_.composite_planner_attempts++;
 
-        if (resolveWithFullProblemCompositePlanner(config.max_composite_attempts, log_entry)) {
-            DOUT << "  Full-problem composite planner resolved the conflict" << std::endl;
-            resolution_stats_.composite_planner_successes++;
-            return true;
-        }
+    //     if (resolveWithFullProblemCompositePlanner(config.max_composite_attempts, log_entry)) {
+    //         DOUT << "  Full-problem composite planner resolved the conflict" << std::endl;
+    //         resolution_stats_.composite_planner_successes++;
+    //         return true;
+    //     }
 
-        std::cerr << "  Full-problem composite planner failed after " << config.max_composite_attempts
-                  << " attempts for conflict at timestep " << conflict.timestep << std::endl;
-    }
+    //     std::cerr << "  Full-problem composite planner failed after " << config.max_composite_attempts
+    //               << " attempts for conflict at timestep " << conflict.timestep << std::endl;
+    // }
 
     // All strategies exhausted - conflict could not be resolved
     std::cerr << "  All conflict resolution strategies exhausted for conflict at timestep "
@@ -1743,8 +1746,14 @@ bool CipherKinoPlanner::refineExpandedRegion(
                 << " -> end region: " << decomp_->locateSubRegion(replan_hl_goals[robot_idx]) << std::endl;
         }
 
-        local_high_level_paths = mapf_solver.solve(
-            decomp_, replan_hl_starts, replan_hl_goals, expanded_leaf_regions, structurally_forbidden_edges_);
+        try {
+            local_high_level_paths = mapf_solver.solve(
+                decomp_, replan_hl_starts, replan_hl_goals, expanded_leaf_regions, structurally_forbidden_edges_);
+        } catch (const std::exception& e) {
+            DOUT << "        MAPF failed" << std::endl;
+            freeUpdateInfoStates(robot_1, robot_2, update_info_1, update_info_2);
+            return false;
+        }
     }
 
     if (local_high_level_paths.empty()) {
@@ -2321,7 +2330,7 @@ void CipherKinoPlanner::integrateRefinedPaths(
             size_t entry_state_idx = 0;
             bool entry_found = false;
             for (size_t s = 0; s < original_path->getStateCount(); ++s) {
-                if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_entry_state) < 1e-3) {
+                if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_entry_state) < 0.5) {
                     DOUT << "!!Found Start!!" << std::endl;
                     entry_state_idx = s;
                     entry_found = true;
@@ -2351,7 +2360,7 @@ void CipherKinoPlanner::integrateRefinedPaths(
             size_t exit_state_idx = original_path->getStateCount() - 1;
             bool exit_found = false;
             for (size_t s = entry_state_idx; s < original_path->getStateCount(); ++s) {
-                if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_exit_state) < 1e-3) {
+                if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_exit_state) < 0.5) {
                     DOUT << "!!Found Exit!!" << std::endl;
                     exit_state_idx = s;
                     exit_found = true;

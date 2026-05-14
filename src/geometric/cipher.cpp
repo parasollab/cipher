@@ -4,15 +4,15 @@
 #include <memory>
 #include <ompl/util/Console.h>
 
-#ifndef NDEBUG
+// #ifndef NDEBUG
 #define DOUT std::cout
-#else
-namespace {
-struct NullBuf : std::streambuf { int overflow(int c) override { return c; } };
-struct NullStream : std::ostream { NullStream() : std::ostream(&_buf) {} NullBuf _buf; } _null_stream;
-}
-#define DOUT _null_stream
-#endif
+// #else
+// namespace {
+// struct NullBuf : std::streambuf { int overflow(int c) override { return c; } };
+// struct NullStream : std::ostream { NullStream() : std::ostream(&_buf) {} NullBuf _buf; } _null_stream;
+// }
+// #define DOUT _null_stream
+// #endif
 #include <ompl/util/RandomNumbers.h>
 #include <boost/program_options.hpp>
 #include <yaml-cpp/yaml.h>
@@ -1436,24 +1436,24 @@ bool CipherGeometricPlanner::resolveConflictWithStrategies(const SegmentConflict
     }
 
     // Strategy 2: Full-Problem Composite Planner (ALL robots, original starts/goals)
-    if (config.max_composite_attempts > 0) {
-        DOUT << "  Trying full-problem composite planner (max "
-                  << config.max_composite_attempts << " attempts)..." << std::endl;
-        resolution_stats_.composite_planner_attempts++;
+    // if (config.max_composite_attempts > 0) {
+    //     DOUT << "  Trying full-problem composite planner (max "
+    //               << config.max_composite_attempts << " attempts)..." << std::endl;
+    //     resolution_stats_.composite_planner_attempts++;
 
-        auto t_fcp = std::chrono::steady_clock::now();
-        bool fcp_ok = resolveWithFullProblemCompositePlanner(config.max_composite_attempts, log_entry);
-        resolution_stats_.time_full_composite_resolution_seconds +=
-            std::chrono::duration<double>(std::chrono::steady_clock::now() - t_fcp).count();
-        if (fcp_ok) {
-            DOUT << "  Full-problem composite planner resolved the conflict" << std::endl;
-            resolution_stats_.composite_planner_successes++;
-            return true;
-        }
+    //     auto t_fcp = std::chrono::steady_clock::now();
+    //     bool fcp_ok = resolveWithFullProblemCompositePlanner(config.max_composite_attempts, log_entry);
+    //     resolution_stats_.time_full_composite_resolution_seconds +=
+    //         std::chrono::duration<double>(std::chrono::steady_clock::now() - t_fcp).count();
+    //     if (fcp_ok) {
+    //         DOUT << "  Full-problem composite planner resolved the conflict" << std::endl;
+    //         resolution_stats_.composite_planner_successes++;
+    //         return true;
+    //     }
 
-        std::cerr << "  Full-problem composite planner failed after " << config.max_composite_attempts
-                  << " attempts for conflict at timestep " << conflict.timestep << std::endl;
-    }
+    //     std::cerr << "  Full-problem composite planner failed after " << config.max_composite_attempts
+    //               << " attempts for conflict at timestep " << conflict.timestep << std::endl;
+    // }
 
     // All strategies exhausted - conflict could not be resolved
     std::cerr << "  All conflict resolution strategies exhausted for conflict at timestep "
@@ -1869,8 +1869,14 @@ bool CipherGeometricPlanner::refineExpandedRegion(
                 << " -> end region: " << decomp_->locateSubRegion(replan_hl_goals[robot_idx]) << std::endl;
         }
 
+        try {
         local_high_level_paths = mapf_solver.solve(
             decomp_, replan_hl_starts, replan_hl_goals, expanded_leaf_regions);
+        } catch (const std::exception& e) {
+            DOUT << "        MAPF failed" << std::endl;
+            freeUpdateInfoStates(robot_1, robot_2, update_info_1, update_info_2);
+            return false;
+        }
     }
 
     if (local_high_level_paths.empty()) {
@@ -2448,7 +2454,23 @@ void CipherGeometricPlanner::integrateRefinedPaths(
             size_t exit_state_idx = original_path->getStateCount() - 1;
             bool exit_found = false;
             for (size_t s = entry_state_idx; s < original_path->getStateCount(); ++s) {
-                if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_exit_state) < 1e-3) {
+                std::cout << "Orig: ";
+                si->getStateSpace()->printState(original_path->getState(s));
+
+                std::cout << " " << std::endl;
+
+                std::cout << "planning exit: ";
+                si->getStateSpace()->printState(update_info.planning_exit_state);
+                std::cout << " " << std::endl;
+                std::vector<double> reals_s, reals_e;
+                si->getStateSpace()->copyToReals(reals_s, original_path->getState(s));
+                si->getStateSpace()->copyToReals(reals_e, update_info.planning_exit_state);
+                double pos_dist = 0.0;
+                for (size_t d = 0; d < 2; ++d)
+                    pos_dist += (reals_s[d] - reals_e[d]) * (reals_s[d] - reals_e[d]);
+                pos_dist = std::sqrt(pos_dist);
+                if (pos_dist < 0.2) {
+                // if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_exit_state) < 1e-3) {
                     DOUT << "!!Found Exit!!" << std::endl;
                     exit_state_idx = s;
                     exit_found = true;
