@@ -409,6 +409,58 @@ target_link_libraries(guided_control_rrt PRIVATE
   ${FCL_LIBRARIES}
 )
 
+add_executable(kinodynamic_decoupled_guided_rrt
+  src/kinodynamic/decoupled_guided_rrt.cpp
+  src/mapf/cbs.cpp
+  src/utils/grid_decomposition.cpp
+  db-CBS/src/robots.cpp
+)
+target_include_directories(kinodynamic_decoupled_guided_rrt PRIVATE
+  ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/src/guided
+  ${CMAKE_SOURCE_DIR}/src/mapf
+  ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_SOURCE_DIR}/db-CBS/src
+  ${YAML_INCLUDE_DIRS}
+  ${FCL_INCLUDE_DIRS}
+)
+target_link_directories(kinodynamic_decoupled_guided_rrt PRIVATE ${YAML_LIBRARY_DIRS})
+target_link_libraries(kinodynamic_decoupled_guided_rrt PRIVATE
+  ompl
+  Eigen3::Eigen
+  Boost::headers
+  Boost::program_options
+  ${YAML_LIBRARIES}
+  ${FCL_LIBRARIES}
+)
+
+add_executable(geometric_decoupled_guided_rrt
+  src/geometric/decoupled_guided_rrt.cpp
+  src/mapf/cbs.cpp
+  src/utils/grid_decomposition.cpp
+  db-CBS/src/robots.cpp
+)
+target_include_directories(geometric_decoupled_guided_rrt PRIVATE
+  ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/src/guided
+  ${CMAKE_SOURCE_DIR}/src/mapf
+  ${CMAKE_SOURCE_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_BINARY_DIR}/Multi-Robot-OMPL/src
+  ${CMAKE_SOURCE_DIR}/db-CBS/src
+  ${YAML_INCLUDE_DIRS}
+  ${FCL_INCLUDE_DIRS}
+)
+target_link_directories(geometric_decoupled_guided_rrt PRIVATE ${YAML_LIBRARY_DIRS})
+target_link_libraries(geometric_decoupled_guided_rrt PRIVATE
+  ompl
+  Eigen3::Eigen
+  Boost::headers
+  Boost::program_options
+  ${YAML_LIBRARIES}
+  ${FCL_LIBRARIES}
+)
+
 add_executable(kinodynamic_cipher
   src/kinodynamic/cipher_kino.cpp
   src/kinodynamic/coupled_rrt.cpp
