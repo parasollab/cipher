@@ -290,7 +290,7 @@ CipherGeometricResult CipherGeometricPlanner::plan() {
                               << "); decomposing all leaf cells one level and retrying" << std::endl;
                     auto t_decomp = std::chrono::steady_clock::now();
                     bool decomp_ok = decomposeAllLeavesOneLevel();
-                    resolution_stats_.time_decomposition_seconds +=
+                    resolution_stats_.time_cbs_decomposition_seconds +=
                         std::chrono::duration<double>(std::chrono::steady_clock::now() - t_decomp).count();
                     if (!decomp_ok) {
                         std::cerr << "[Phase 1] All cells at maximum decomposition depth; falling back to composite planner" << std::endl;
@@ -1676,7 +1676,7 @@ bool CipherGeometricPlanner::refineExpandedRegion(
                 continue;
             decomp_->Decompose(r);
         }
-        resolution_stats_.time_decomposition_seconds +=
+        resolution_stats_.time_refinement_decomposition_seconds +=
             std::chrono::duration<double>(std::chrono::steady_clock::now() - t_decomp).count();
     }
     DOUT << "        Decomposed " << new_regions.size() << " cell(s) in global decomposition" << std::endl;
@@ -3020,7 +3020,8 @@ int main(int argc, char** argv)
         stats["time_transition_feasibility_seconds"]     = s.time_transition_feasibility_seconds;
         stats["time_mapf_seconds"]                       = s.time_mapf_seconds;
         stats["time_guided_planning_seconds"]            = s.time_guided_planning_seconds;
-        stats["time_decomposition_seconds"]              = s.time_decomposition_seconds;
+        stats["time_cbs_decomposition_seconds"]           = s.time_cbs_decomposition_seconds;
+        stats["time_refinement_decomposition_seconds"]   = s.time_refinement_decomposition_seconds;
         stats["time_check_conflicts_seconds"]            = s.time_check_conflicts_seconds;
         stats["time_conflict_resolution_seconds"]        = s.time_conflict_resolution_seconds;
         stats["time_hierarchical_resolution_seconds"]    = s.time_hierarchical_resolution_seconds;

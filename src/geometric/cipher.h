@@ -247,7 +247,8 @@ struct ResolutionStats {
     // Main loop
     double time_mapf_seconds = 0.0;
     double time_guided_planning_seconds = 0.0;
-    double time_decomposition_seconds = 0.0;
+    double time_cbs_decomposition_seconds = 0.0;       // decomposeAllLeavesOneLevel() on CBS failure
+    double time_refinement_decomposition_seconds = 0.0; // decomp_->Decompose() inside refineExpandedRegion()
     double time_check_conflicts_seconds = 0.0;
     double time_conflict_resolution_seconds = 0.0;
     // Within conflict resolution
