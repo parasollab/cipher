@@ -65,6 +65,8 @@ int main(int argc, char** argv)
     double max_obstacle_volume_percent = 1.0;
     int seed = -1;
     int max_refinement_levels = 3;
+    bool   check_transition_feasibility             = false;
+    double transition_feasibility_robot_size_multiplier = 1.0;
 
     po::options_description desc("Allowed options");
     desc.add_options()
@@ -96,6 +98,10 @@ int main(int argc, char** argv)
             if (cfg["max_obstacle_volume_percent"]) max_obstacle_volume_percent = cfg["max_obstacle_volume_percent"].as<double>();
             if (cfg["seed"])                        seed                        = cfg["seed"].as<int>();
             if (cfg["max_refinement_levels"])       max_refinement_levels       = cfg["max_refinement_levels"].as<int>();
+            if (cfg["check_transition_feasibility"])
+                check_transition_feasibility = cfg["check_transition_feasibility"].as<bool>();
+            if (cfg["transition_feasibility_robot_size_multiplier"])
+                transition_feasibility_robot_size_multiplier = cfg["transition_feasibility_robot_size_multiplier"].as<double>();
         } catch (const YAML::Exception& e) {
             std::cerr << "ERROR loading config file: " << e.what() << std::endl;
             return 1;
@@ -236,16 +242,74 @@ int main(int argc, char** argv)
     // DOUT << "Running CBS (capacity=" << cbs_capacity
     //           << ", timeout=" << cbs_timeout << "s)..." << std::endl;
 
+    ForbiddenEdgeSet structurally_forbidden_edges;
+    if (check_transition_feasibility) {
+        float max_radius = 0.0f;
+        for (auto& robot : robots) {
+            for (size_t p = 0; p < robot->numParts(); ++p) {
+                auto geom = robot->getCollisionGeometry(p);
+                if (!geom) continue;
+                geom->computeLocalAABB();
+                const auto& aabb = geom->aabb_local;
+                float hx = (aabb.max_[0] - aabb.min_[0]) / 2.0f;
+                float hy = (aabb.max_[1] - aabb.min_[1]) / 2.0f;
+                max_radius = std::max(max_radius, std::sqrt(hx * hx + hy * hy));
+            }
+        }
+        double threshold = transition_feasibility_robot_size_multiplier * 2.0 * max_radius;
+        int total = decomp->getTotalNumRegions();
+        for (int a = 0; a < total; ++a) {
+            if (!decomp->isLeafRegion(a)) continue;
+            const auto ba = decomp->getCellBounds(a);
+            std::vector<int> neighbors;
+            decomp->getNeighbors(a, neighbors);
+            for (int b : neighbors) {
+                if (!decomp->isLeafRegion(b)) continue;
+                const auto bb = decomp->getCellBounds(b);
+                double seg_lo, seg_hi;
+                if (std::abs(ba.high[0] - bb.low[0]) < 1e-9 || std::abs(bb.high[0] - ba.low[0]) < 1e-9) {
+                    seg_lo = std::max(ba.low[1], bb.low[1]);
+                    seg_hi = std::min(ba.high[1], bb.high[1]);
+                } else {
+                    seg_lo = std::max(ba.low[0], bb.low[0]);
+                    seg_hi = std::min(ba.high[0], bb.high[0]);
+                }
+                if (seg_hi <= seg_lo) continue;
+                bool shared_in_y = (std::abs(ba.high[0] - bb.low[0]) < 1e-9 ||
+                                     std::abs(bb.high[0] - ba.low[0]) < 1e-9);
+                std::vector<std::pair<double,double>> covered;
+                for (auto* obs : obstacles) {
+                    const auto& aabb = obs->getAABB();
+                    double lo = shared_in_y ? (double)aabb.min_[1] : (double)aabb.min_[0];
+                    double hi = shared_in_y ? (double)aabb.max_[1] : (double)aabb.max_[0];
+                    double clo = std::max(lo, seg_lo);
+                    double chi = std::min(hi, seg_hi);
+                    if (chi > clo) covered.emplace_back(clo, chi);
+                }
+                std::sort(covered.begin(), covered.end());
+                double longest_free = 0.0, cur = seg_lo;
+                for (auto& [clo, chi] : covered) {
+                    if (clo > cur) longest_free = std::max(longest_free, clo - cur);
+                    cur = std::max(cur, chi);
+                }
+                longest_free = std::max(longest_free, seg_hi - cur);
+                if (longest_free < threshold) {
+                    structurally_forbidden_edges.insert({a, b});
+                    structurally_forbidden_edges.insert({b, a});
+                }
+            }
+        }
+    }
+
     std::vector<std::vector<int>> region_paths;
     YAML::Node viz_mapf_event;
     bool cbs_ok = false;
+    bool cbs_failed = false;
     int cbs_attempts = 0;
     while (!cbs_ok) {
-//         DOUT << "[CBS] Attempt " << cbs_attempts + 1
-                //   << " with " << decomp->getTotalNumRegions() << " regions..." << std::endl;
         try {
             CBS cbs(cbs_capacity, cbs_timeout, obstacles, max_obstacle_volume_percent);
-            region_paths = cbs.solve(decomp, start_states, goal_states);
+            region_paths = cbs.solve(decomp, start_states, goal_states, {}, structurally_forbidden_edges);
 
             bool paths_valid = static_cast<int>(region_paths.size()) >= num_robots;
             if (paths_valid) {
@@ -259,11 +323,62 @@ int main(int argc, char** argv)
                         << "); decomposing regions one level and retrying" << std::endl;
             if (!decomposeAllLeavesOneLevel()) {
                 std::cerr << "[CBS] All cells at maximum decomposition depth; giving up" << std::endl;
-                write_failure();
-                return 1;
+                cbs_failed = true;
+                break;
             }
         }
         ++cbs_attempts;
+    }
+
+    if (cbs_failed) {
+        write_failure();
+        if (!vizFile.empty()) {
+            YAML::Node viz_header;
+            viz_header["dimensions"] = 2;
+            YAML::Node viz_robots;
+            for (int r = 0; r < num_robots; ++r) {
+                std::vector<double> s_reals, g_reals;
+                robot_sis[r]->getStateSpace()->copyToReals(s_reals, start_states[r]);
+                robot_sis[r]->getStateSpace()->copyToReals(g_reals, goal_states[r]);
+                YAML::Node rn;
+                rn["id"] = "r" + std::to_string(r);
+                YAML::Node geom; geom["type"] = "sphere"; geom["radius"] = 0.15;
+                rn["geometry"] = geom;
+                YAML::Node start_node; start_node.push_back(s_reals[0]); start_node.push_back(s_reals[1]); start_node.push_back(0.0);
+                YAML::Node goal_node;  goal_node.push_back(g_reals[0]);  goal_node.push_back(g_reals[1]);  goal_node.push_back(0.0);
+                rn["start"] = start_node;
+                rn["goal"]  = goal_node;
+                viz_robots.push_back(rn);
+            }
+            viz_header["robots"] = viz_robots;
+            YAML::Node viz_grid;
+            YAML::Node viz_cells;
+            const int num_regions = decomp->getTotalNumRegions();
+            for (int rid = 0; rid < num_regions; ++rid) {
+                const auto& rb = decomp->getCellBounds(rid);
+                YAML::Node cn;
+                cn["id"] = "c" + std::to_string(rid);
+                YAML::Node bounds;
+                YAML::Node bmin; bmin.push_back(rb.low[0]);  bmin.push_back(rb.low[1]);  bmin.push_back(0.0);
+                YAML::Node bmax; bmax.push_back(rb.high[0]); bmax.push_back(rb.high[1]); bmax.push_back(0.0);
+                bounds["min"] = bmin;
+                bounds["max"] = bmax;
+                cn["bounds"] = bounds;
+                viz_cells.push_back(cn);
+            }
+            viz_grid["cells"] = viz_cells;
+            viz_header["grid"] = viz_grid;
+            YAML::Node viz_doc;
+            viz_doc["header"] = viz_header;
+            viz_doc["events"] = YAML::Node(YAML::NodeType::Sequence);
+            try {
+                std::ofstream vfout(vizFile);
+                vfout << viz_doc;
+            } catch (const std::exception& e) {
+                std::cerr << "ERROR writing viz file: " << e.what() << std::endl;
+            }
+        }
+        return 1;
     }
 
 //     for (int r = 0; r < num_robots; ++r) {

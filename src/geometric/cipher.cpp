@@ -1233,7 +1233,7 @@ GeometricPlanningResult CipherGeometricPlanner::useCompositePlanner(
     // Configure and run the coupled RRT planner
     CoupledRRTConfig rrt_config;
     rrt_config.time_limit     = remainingTime();
-    rrt_config.goal_threshold = config_.goal_threshold;
+    rrt_config.goal_threshold = 1.0;
     rrt_config.seed           = config_.seed;
 
     CoupledRRTPlanner composite_planner(rrt_config);
@@ -1332,7 +1332,7 @@ GeometricPlanningResult CipherGeometricPlanner::useDecoupledPlanner(
 
     DecoupledRRTConfig rrt_config;
     rrt_config.time_limit     = remainingTime();
-    rrt_config.goal_threshold = config_.goal_threshold;
+    rrt_config.goal_threshold = 1.0;
     rrt_config.goal_bias      = config_.goal_bias;
     rrt_config.seed           = config_.seed;
 

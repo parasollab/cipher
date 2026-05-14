@@ -107,7 +107,8 @@ std::vector<std::vector<int>> CBS::solve(
         auto current_time = std::chrono::high_resolution_clock::now();
         double elapsed = std::chrono::duration<double>(current_time - start_time).count();
         if (elapsed > timeout_) {
-            throw std::runtime_error("CBS: Timeout after " + std::to_string(elapsed) + " seconds");
+            throw std::runtime_error("CBS: Timeout after " + std::to_string(elapsed) +
+                                     "s (" + std::to_string(iterations) + " CT nodes explored)");
         }
 
         // Check iteration limit
@@ -115,6 +116,7 @@ std::vector<std::vector<int>> CBS::solve(
             throw std::runtime_error("CBS: Exceeded maximum iterations (" +
                                      std::to_string(max_iterations) + ")");
         }
+
 
         CTNode current = open_list.top();
         open_list.pop();
@@ -463,8 +465,11 @@ TimedPath CBS::findPathWithConstraints(
             return nodes[a] > nodes[b];
         });
 
-    // Visited set: (region, time)
-    std::set<std::pair<int,int>> visited;
+    // closed: fully processed (region, time) pairs
+    // in_open: currently queued — prevents pushing the same state multiple times,
+    // which would inflate the expansion counter combinatorially with zero heuristic
+    std::set<std::pair<int,int>> closed;
+    std::set<std::pair<int,int>> in_open;
 
     // Initialize with start state
     STNode start_node;
@@ -476,30 +481,34 @@ TimedPath CBS::findPathWithConstraints(
 
     nodes.push_back(start_node);
     open_list.push(0);
+    in_open.insert({start_region, 0});
 
     const int max_time = 1000;  // Maximum time steps to consider
     const int max_expansions = 100000;  // Safety limit
     int expansions = 0;
 
     while (!open_list.empty()) {
-        if (++expansions > max_expansions) {
-            throw std::runtime_error("Low-level A*: Exceeded maximum expansions");
-        }
-
         int current_idx = open_list.top();
         open_list.pop();
 
         const STNode current = nodes[current_idx];  // copy: push_back below may reallocate
 
-        // Skip if already visited
-        if (visited.count({current.region, current.time})) {
+        if (closed.count({current.region, current.time}))
             continue;
+        closed.insert({current.region, current.time});
+        in_open.erase({current.region, current.time});
+
+        if (++expansions > max_expansions) {
+            throw std::runtime_error(
+                "Low-level A*: Exceeded maximum expansions"
+                " (start=" + std::to_string(start_region) +
+                " goal=" + std::to_string(goal_region) +
+                " constraints=" + std::to_string(constraints.vertex_constraints.size()) +
+                "v+" + std::to_string(constraints.edge_constraints.size()) + "e)");
         }
-        visited.insert({current.region, current.time});
 
         // Goal check
         if (current.region == goal_region) {
-            // Reconstruct path
             TimedPath path;
             int idx = current_idx;
             while (idx != -1) {
@@ -509,14 +518,12 @@ TimedPath CBS::findPathWithConstraints(
             }
             std::reverse(path.regions.begin(), path.regions.end());
             std::reverse(path.times.begin(), path.times.end());
-            path.cost = current.time;  // Makespan
+            path.cost = current.time;
             return path;
         }
 
-        // Safety: don't expand beyond max time
-        if (current.time >= max_time) {
+        if (current.time >= max_time)
             continue;
-        }
 
         // Expand neighbors
         std::vector<int> neighbors;
@@ -525,24 +532,14 @@ TimedPath CBS::findPathWithConstraints(
         for (int next_region : neighbors) {
             int next_time = current.time + 1;
 
-            // Check vertex constraint
-            if (violatesVertexConstraint(next_region, next_time, constraints)) {
-                continue;
-            }
+            if (closed.count({next_region, next_time})) continue;
+            if (in_open.count({next_region, next_time})) continue;
 
-            // Check edge constraint (only for actual moves, not wait).
-            // Constraints store departure time, so compare against current.time.
+            if (violatesVertexConstraint(next_region, next_time, constraints)) continue;
             if (current.region != next_region &&
-                violatesEdgeConstraint(current.region, next_region, current.time, constraints)) {
+                violatesEdgeConstraint(current.region, next_region, current.time, constraints))
                 continue;
-            }
 
-            // Skip if already visited
-            if (visited.count({next_region, next_time})) {
-                continue;
-            }
-
-            // Create successor node
             STNode successor;
             successor.region = next_region;
             successor.time = next_time;
@@ -553,11 +550,15 @@ TimedPath CBS::findPathWithConstraints(
             int successor_idx = nodes.size();
             nodes.push_back(successor);
             open_list.push(successor_idx);
+            in_open.insert({next_region, next_time});
         }
     }
 
-    // No path found
-    throw std::runtime_error("Low-level A*: No path found with constraints");
+    throw std::runtime_error("Low-level A*: No path found with constraints"
+        " (start=" + std::to_string(start_region) +
+        " goal=" + std::to_string(goal_region) +
+        " constraints=" + std::to_string(constraints.vertex_constraints.size()) +
+        "v+" + std::to_string(constraints.edge_constraints.size()) + "e)");
 }
 
 // ============================================================================

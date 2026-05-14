@@ -2413,7 +2413,7 @@ void CipherKinoPlanner::integrateRefinedPaths(
             size_t entry_state_idx = 0;
             bool entry_found = false;
             for (size_t s = 0; s < original_path->getStateCount(); ++s) {
-                if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_entry_state) < 0.5) {
+                if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_entry_state) < 1.0) {
                     DOUT << "!!Found Start!!" << std::endl;
                     entry_state_idx = s;
                     entry_found = true;
@@ -2443,7 +2443,7 @@ void CipherKinoPlanner::integrateRefinedPaths(
             size_t exit_state_idx = original_path->getStateCount() - 1;
             bool exit_found = false;
             for (size_t s = entry_state_idx; s < original_path->getStateCount(); ++s) {
-                if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_exit_state) < 0.5) {
+                if (si->getStateSpace()->distance(original_path->getState(s), update_info.planning_exit_state) < 1.0) {
                     DOUT << "!!Found Exit!!" << std::endl;
                     exit_state_idx = s;
                     exit_found = true;
