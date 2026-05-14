@@ -17,16 +17,30 @@ import copy
 import sys
 
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import matplotlib.colors as mcolors
 import numpy as np
 import yaml
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 — registers 3D projection
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from matplotlib.patches import Polygon as MplPolygon
+from matplotlib.transforms import Affine2D
 from matplotlib.widgets import Slider
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
+ROBOT_GEOMETRY = {
+    'single_integrator_0':               {'shape': 'sphere', 'radius': 0.1},
+    'double_integrator_0':               {'shape': 'sphere', 'radius': 0.15},
+    'unicycle_first_order_0':            {'shape': 'box',    'length': 0.5, 'width': 0.25},
+    'unicycle_first_order_0_sphere':     {'shape': 'sphere', 'radius': 0.4},
+    'unicycle_second_order_0':           {'shape': 'box',    'length': 0.5, 'width': 0.25},
+    'car_first_order_0':                 {'shape': 'box',    'length': 0.5, 'width': 0.25},
+    'car_first_order_with_1_trailers_0': {'shape': 'box',    'length': 0.5, 'width': 0.25},
+}
+_DEFAULT_GEOM = {'shape': 'sphere', 'radius': 0.2}
 
 ROBOT_COLORS = [
     '#1f77b4',  # blue
@@ -109,6 +123,20 @@ def interpolate_position(path, t, n_spatial=3):
             return p0 + alpha * (p1 - p0)
         cumulative += dur
     return np.asarray(path[-1]['state'][:n_spatial], float)
+
+
+def interpolate_state(path, t):
+    """Linearly interpolate the full state vector at continuous time t along a path."""
+    cumulative = 0.0
+    for i, s in enumerate(path[:-1]):
+        dur = float(s['duration'])
+        if cumulative + dur >= t:
+            alpha = (t - cumulative) / dur if dur > 0 else 0.0
+            p0 = np.asarray(s['state'], float)
+            p1 = np.asarray(path[i + 1]['state'], float)
+            return p0 + alpha * (p1 - p0)
+        cumulative += dur
+    return np.asarray(path[-1]['state'], float)
 
 
 def path_duration(path):
@@ -395,13 +423,27 @@ class Visualizer:
         arts = []
         for rid, r in self.robots.items():
             color = self.robot_colors[rid]
-            s_pos = self._pos(r['start'])
-            g_pos = self._pos(r['goal'])
-            kw = {'depthshade': False} if self.is_3d else {}
-            arts.append(self._scatter_pt(s_pos, c=[color], marker='^',
-                                         s=120, zorder=5, **kw))
-            arts.append(self._scatter_pt(g_pos, c=[color], marker='*',
-                                         s=200, zorder=5, **kw))
+            s_state = r['start']
+            g_state = r['goal']
+            if self.is_3d:
+                kw = {'depthshade': False}
+                arts.append(self._scatter_pt(self._pos(s_state), c=[color],
+                                             marker='^', s=120, zorder=5, **kw))
+                arts.append(self._scatter_pt(self._pos(g_state), c=[color],
+                                             marker='*', s=200, zorder=5, **kw))
+            else:
+                dynamics = r.get('dynamics', '')
+                geom = ROBOT_GEOMETRY.get(dynamics, _DEFAULT_GEOM)
+                sx, sy = float(s_state[0]), float(s_state[1])
+                syaw = float(s_state[2]) if len(s_state) > 2 else 0.0
+                gx, gy = float(g_state[0]), float(g_state[1])
+                gyaw = float(g_state[2]) if len(g_state) > 2 else 0.0
+                p = self._make_robot_outline_patch_2d(geom, sx, sy, syaw, color, is_start=True)
+                self.ax.add_patch(p)
+                arts.append(p)
+                p = self._make_robot_outline_patch_2d(geom, gx, gy, gyaw, color, is_start=False)
+                self.ax.add_patch(p)
+                arts.append(p)
         self.artists['starts_goals'] = arts
 
     def _status_text(self, msg):
@@ -627,6 +669,51 @@ class Visualizer:
     # Robot animation
     # ------------------------------------------------------------------
 
+    def _make_robot_patch_2d(self, geom, x, y, yaw, color):
+        """Create a filled patch sized in data coordinates matching the robot's collision geometry."""
+        if geom['shape'] == 'sphere':
+            return mpatches.Circle(
+                (x, y), geom['radius'],
+                facecolor=color, edgecolor='black', lw=1.2,
+                alpha=0.85, zorder=7,
+            )
+        length, width = geom['length'], geom['width']
+        patch = mpatches.FancyBboxPatch(
+            (-length / 2, -width / 2), length, width,
+            boxstyle='square,pad=0',
+            facecolor=color, edgecolor='black', lw=1.2,
+            alpha=0.85, zorder=7,
+        )
+        patch.set_transform(
+            Affine2D().rotate(yaw).translate(x, y) + self.ax.transData
+        )
+        return patch
+
+    def _make_robot_outline_patch_2d(self, geom, x, y, yaw, color, is_start):
+        """Create a start (dashed outline) or goal (solid outline) pose patch in data coordinates."""
+        r, g, b, _ = mcolors.to_rgba(color)
+        face_alpha = 0.18 if is_start else 0.28
+        ls = '--' if is_start else '-'
+        lw = 2.0 if is_start else 2.5
+        facecolor = (r, g, b, face_alpha)
+        if geom['shape'] == 'sphere':
+            return mpatches.Circle(
+                (x, y), geom['radius'],
+                facecolor=facecolor, edgecolor=color, lw=lw,
+                linestyle=ls, zorder=4,
+            )
+        length, width = geom['length'], geom['width']
+        patch = mpatches.FancyBboxPatch(
+            (-length / 2, -width / 2), length, width,
+            boxstyle='square,pad=0',
+            facecolor=facecolor, edgecolor=color, lw=lw,
+            linestyle=ls, zorder=4,
+        )
+        patch.set_transform(
+            Affine2D().rotate(yaw).translate(x, y) + self.ax.transData
+        )
+        return patch
+
     def _animate_final_paths(self):
         """Animate robots as moving dots along their current low-level paths (or raw if no opt)."""
         paths_to_animate = self.low_level_paths or self.raw_paths
@@ -664,18 +751,29 @@ class Visualizer:
 
         def draw_robots_at(t):
             for rid, path in paths_to_animate.items():
-                pos = interpolate_position(path, min(t, path_duration(path)), self._n)
                 color = self.robot_colors.get(rid, 'gray')
                 if rid in robot_markers:
                     try:
                         robot_markers[rid].remove()
                     except Exception:
                         pass
-                kw = {'depthshade': False} if self.is_3d else {}
-                robot_markers[rid] = self._scatter_pt(
-                    pos, c=[color], s=180, marker='o',
-                    zorder=7, edgecolors='black', linewidths=1.5, **kw,
-                )
+                t_clamped = min(t, path_duration(path))
+                if self.is_3d:
+                    pos = interpolate_position(path, t_clamped, self._n)
+                    robot_markers[rid] = self._scatter_pt(
+                        pos, c=[color], s=180, marker='o',
+                        zorder=7, edgecolors='black', linewidths=1.5,
+                        depthshade=False,
+                    )
+                else:
+                    state = interpolate_state(path, t_clamped)
+                    x, y = float(state[0]), float(state[1])
+                    yaw = float(state[2]) if len(state) > 2 else 0.0
+                    dynamics = self.robots.get(rid, {}).get('dynamics', '')
+                    geom = ROBOT_GEOMETRY.get(dynamics, _DEFAULT_GEOM)
+                    patch = self._make_robot_patch_2d(geom, x, y, yaw, color)
+                    self.ax.add_patch(patch)
+                    robot_markers[rid] = patch
 
         def on_slider_changed(val):
             self._scrub_time = val

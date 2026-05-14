@@ -109,7 +109,14 @@ public:
 
     double distanceGoal(const ob::State* st) const override
     {
-        return si_->distance(st, goal_state_);
+        const auto* cs = st->as<ob::CompoundState>();
+        const auto* cg = goal_state_->as<ob::CompoundState>();
+        double dx = cs->as<ob::RealVectorStateSpace::StateType>(0)->values[0]
+                - cg->as<ob::RealVectorStateSpace::StateType>(0)->values[0];
+        double dy = cs->as<ob::RealVectorStateSpace::StateType>(0)->values[1]
+                - cg->as<ob::RealVectorStateSpace::StateType>(0)->values[1];
+        return std::sqrt(dx*dx + dy*dy);
+        // return si_->distance(st, goal_state_);
     }
 
 private:

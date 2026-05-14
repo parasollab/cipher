@@ -2,6 +2,7 @@
 #define GUIDED_GEOMETRIC_RRT_H
 
 #include <iostream>
+#include <set>
 #include <ompl/control/planners/rrt/RRT.h>
 #include <ompl/base/spaces/SE2StateSpace.h>
 #include <ompl/base/spaces/RealVectorStateSpace.h>
@@ -65,6 +66,8 @@ public:
         oc::Control *rctrl = rmotion->control;
         ob::State *xstate = si_->allocState();
 
+        valid_regions.insert(decomp_path[0]);
+
         int region_idx = 0;
         int iteration = 0;
         bool sample_goal = false;
@@ -73,18 +76,21 @@ public:
         {
             ++iteration;
 
-            // Update region coverage map. TODO: SHOULD BE MORE CLEVER!
             if (coverage_map[region_idx] > min_coverage) {
                 if (region_idx < (int)decomp_path.size()-1) {
+                    std::cout << "[GuidedControlRRT] region " << decomp_path[region_idx]
+                              << " covered, advancing to region_idx=" << region_idx + 1
+                              << " (region=" << decomp_path[region_idx + 1] << ")" << std::endl;
                     region_idx++;
+                    valid_regions.insert(decomp_path[region_idx]);
                 } else {
+                    if (!sample_goal)
+                        std::cout << "[GuidedControlRRT] all regions covered, biasing toward goal" << std::endl;
                     sample_goal = true;
                 }
             }
 
-            // std::cout << "[GuidedGeoRRT] sampling from region " << decomp_path[region_idx]
-            //           << " (region_idx=" << region_idx << ")" << std::endl;
-            if (sample_goal && goal_s && goal_s->canSample()) {
+            if (sample_goal && (goal_s != nullptr) && rng_.uniform01() < goalBias_ && goal_s->canSample()) {
                 goal_s->sampleGoal(rstate);
             } else {
                 std::vector<double> coord(decomposition_->getDimension());
@@ -281,9 +287,11 @@ protected:
 
     std::vector<int> decomp_path;
 
+    std::set<int> valid_regions;
+
     std::unordered_map<int, int> coverage_map;
 
-    int min_coverage = 10;
+    int min_coverage = 2;
 
 };
 
