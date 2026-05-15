@@ -4,6 +4,15 @@ import matplotlib.backends.backend_pdf as pdf_backend
 import pandas as pd
 import os
 
+plt.rcParams.update({
+    'font.size': 14,
+    'axes.labelsize': 14,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
+    'legend.fontsize': 10,
+    'axes.titlesize': 15,
+})
+
 name_map = {
     'kino_coupled_rrt': 'Coupled RRT',
     'kino_decoupled_rrt': 'Decoupled RRT',
@@ -16,10 +25,14 @@ name_map = {
     'k_arc': 'K-ARC',
     'geometric_cipher': 'CIPHER',
     'kinodynamic_cipher': 'CIPHER',
+    'wodash': 'WG-DaSH',
+    'k_wodash': 'WG-DaSH',
+    'decoupled_guided_rrt': 'PP-RG-RRT',
+    'kino_decoupled_guided_rrt': 'PP-RG-RRT',
 }
 
 # CIPHER first, then all other methods in a stable order
-ALL_DISPLAY_NAMES = ['CIPHER', 'Coupled RRT', 'Decoupled RRT', 'sRRT', 'MRdRRT', 'ARC', 'KCBS', 'K-ARC']
+ALL_DISPLAY_NAMES = ['CIPHER', 'PP-RG-RRT', 'Coupled RRT', 'Decoupled RRT', 'sRRT', 'MRdRRT', 'ARC', 'KCBS', 'K-ARC', 'WG-DaSH', 'K-WG-DaSH']
 METHOD_PALETTE = dict(zip(ALL_DISPLAY_NAMES, sns.color_palette("tab10", len(ALL_DISPLAY_NAMES))))
 
 CONFIGS = [
@@ -33,7 +46,8 @@ CONFIGS = [
             'low_clutter_70x70', 'medium_clutter_70x70', 'high_clutter_70x70',
             'boxes_70x70'
         ],
-        'methods': ['coupled_rrt', 'decoupled_rrt', 'srrt', 'drrt', 'arc', 'geometric_cipher'],
+        'methods': ['coupled_rrt', 'decoupled_rrt', 'srrt', 'drrt', 'arc', 'geometric_cipher', 'wodash', 'decoupled_guided_rrt'],
+        'extra_files': ['ppl_summary.csv'],
     },
     {
         'label': 'kinodynamic',
@@ -52,7 +66,8 @@ CONFIGS = [
             'open_70x70_double', 'rooms_70x70_double',
             'low_clutter_70x70_double', 'medium_clutter_70x70_double', 'high_clutter_70x70_double',
         ],
-        'methods': ['kino_coupled_rrt', 'kino_decoupled_rrt', 'kcbs', 'k_arc', 'kinodynamic_cipher'],
+        'methods': ['kino_coupled_rrt', 'kino_decoupled_rrt', 'k_arc', 'kinodynamic_cipher', 'k_wodash', 'kino_decoupled_guided_rrt'],
+        'extra_files': ['ppl_summary.csv'],
     },
 ]
 
@@ -64,14 +79,14 @@ def _draw_time(df, scenario, methods, num_robots, ax):
     df_filtered['planning_time'] = df_filtered['planning_time'].replace(0, 1e-4)
     df_filtered['method'] = df_filtered['method'].map(lambda m: name_map.get(m, m))
     present = [m for m in ALL_DISPLAY_NAMES if m in df_filtered['method'].unique()]
-    ax.set_title('Planning Time')
+    # ax.set_title('Planning Time')
     ax.set_xlabel('Number of Robots')
     ax.set_ylabel('Time (s)')
     ax.set_yscale('log')
     ax.grid(True, which="both", ls="--", linewidth=0.5)
     if df_filtered.empty or not present:
         return
-    sns.lineplot(x='robots', y='planning_time', hue='method', hue_order=present, palette=METHOD_PALETTE, data=df_filtered, err_style="bars", marker='o', ax=ax)
+    sns.lineplot(x='robots', y='planning_time', hue='method', hue_order=present, palette=METHOD_PALETTE, data=df_filtered, err_style="bars", marker='o', markersize=8, ax=ax)
     ax.legend()
 
 
@@ -80,13 +95,13 @@ def _draw_success_rate(df, scenario, methods, num_robots, ax):
     df_filtered = df[(df['scenario'] == scenario) & (df['method'].isin(methods)) & robot_mask].copy()
     df_filtered['method'] = df_filtered['method'].map(lambda m: name_map.get(m, m))
     present = [m for m in ALL_DISPLAY_NAMES if m in df_filtered['method'].unique()]
-    ax.set_title('Success Rate')
+    # ax.set_title('Success Rate')
     ax.set_xlabel('Number of Robots')
     ax.set_ylabel('Success Rate')
     ax.grid(True, which="both", ls="--", linewidth=0.5)
     if df_filtered.empty or not present:
         return
-    sns.lineplot(x='robots', y='solved', hue='method', hue_order=present, palette=METHOD_PALETTE, data=df_filtered, err_style=None, marker='o', ax=ax)
+    sns.lineplot(x='robots', y='solved', hue='method', hue_order=present, palette=METHOD_PALETTE, data=df_filtered, err_style=None, marker='o', markersize=8, ax=ax)
     ax.legend()
 
 
@@ -101,7 +116,7 @@ def _draw_makespan(df, scenario, methods, num_robots, ax):
     ax.grid(True, which="both", ls="--", linewidth=0.5)
     if df_filtered.empty or not present:
         return
-    sns.lineplot(x='robots', y='makespan', hue='method', hue_order=present, palette=METHOD_PALETTE, data=df_filtered, err_style="bars", marker='o', ax=ax)
+    sns.lineplot(x='robots', y='makespan', hue='method', hue_order=present, palette=METHOD_PALETTE, data=df_filtered, err_style="bars", marker='o', markersize=8, ax=ax)
     ax.legend()
 
 
@@ -140,6 +155,10 @@ def generate_pdf(configs, results_dir, num_robots, pdf_path):
             if not os.path.exists(csv_path):
                 continue
             df = pd.read_csv(csv_path)
+            for extra in cfg.get('extra_files', []):
+                extra_path = os.path.join(results_dir, extra)
+                if os.path.exists(extra_path):
+                    df = pd.concat([df, pd.read_csv(extra_path)], ignore_index=True)
             for scenario in cfg['scenarios']:
                 fig, axes = plt.subplots(1, 3, figsize=(22, 5))
                 fig.suptitle(f"{cfg['label']} — {scenario}", fontsize=13)
@@ -172,6 +191,10 @@ def main():
         active_configs.append(cfg)
         label = cfg['label']
         df = pd.read_csv(csv_path)
+        for extra in cfg.get('extra_files', []):
+            extra_path = os.path.join(results_dir, extra)
+            if os.path.exists(extra_path):
+                df = pd.concat([df, pd.read_csv(extra_path)], ignore_index=True)
         for metric, plot_fn in metrics:
             out_dir = os.path.join(base_plot_dir, metric, label)
             os.makedirs(out_dir, exist_ok=True)

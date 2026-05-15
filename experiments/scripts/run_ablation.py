@@ -23,7 +23,7 @@ SCENARIO = 'boxes_70x70'
 def compute_makespan(output):
     longest = 0
     for path_node in output.get('result', []):
-        path = path_node.get('states', [])
+        path = path_node.get('states') or []
         length = sum(
             np.linalg.norm(np.array(path[i]) - np.array(path[i - 1]))
             for i in range(1, len(path))
@@ -35,7 +35,7 @@ def compute_makespan(output):
 def compute_sum_of_costs(output):
     total = 0
     for path_node in output.get('result', []):
-        path = path_node.get('states', [])
+        path = path_node.get('states') or []
         total += sum(
             np.linalg.norm(np.array(path[i]) - np.array(path[i - 1]))
             for i in range(1, len(path))

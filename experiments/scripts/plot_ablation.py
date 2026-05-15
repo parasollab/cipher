@@ -28,6 +28,15 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+plt.rcParams.update({
+    'font.size': 14,
+    'axes.labelsize': 14,
+    'xtick.labelsize': 12,
+    'ytick.labelsize': 12,
+    'legend.fontsize': 10,
+    'axes.titlesize': 15,
+})
+
 # ── colour helpers ────────────────────────────────────────────────────────────
 
 MAPF_PALETTE = {'cbs': '#2196F3', 'astar': '#FF9800'}
@@ -35,16 +44,25 @@ MAPF_LABELS  = {'cbs': 'CBS', 'astar': 'A*'}
 
 
 def _seq_palette(values):
-    """Map a sorted list of numeric values to a sequential blue palette."""
-    cmap = plt.get_cmap('viridis')
-    n = len(values)
-    return {v: cmap(i / max(n - 1, 1)) for i, v in enumerate(sorted(values))}
+    """Map a sorted list of numeric values to a tab10 qualitative palette."""
+    cmap = plt.get_cmap('tab10')
+    return {v: cmap(i / 10.0) for i, v in enumerate(sorted(values))}
 
 
 # ── individual draw functions ─────────────────────────────────────────────────
 
 def _success_by_param(ax, df, param, fixed_val, mapf_method, robot_counts):
     """Line plot: success rate vs robots, hue = param value."""
+    # Build palette from all param values across both methods so CBS and A* share colours
+    ref_mask = pd.Series(True, index=df.index)
+    if fixed_val is not None:
+        other = 'robot_cell_size_ratio' if param == 'region_size' else 'region_size'
+        ref_mask &= (df[other] == fixed_val)
+    if robot_counts is not None:
+        ref_mask &= df['robots'].isin(robot_counts)
+    all_values = sorted(df[ref_mask][param].unique())
+    palette = _seq_palette(all_values)
+
     mask = (df['mapf_method'] == mapf_method)
     if fixed_val is not None:
         other = 'robot_cell_size_ratio' if param == 'region_size' else 'region_size'
@@ -54,26 +72,33 @@ def _success_by_param(ax, df, param, fixed_val, mapf_method, robot_counts):
     sub = df[mask].copy()
     sub['solved'] = sub['solved'].astype(float)
 
-    values = sorted(sub[param].unique())
-    palette = _seq_palette(values)
-
     ax.set_title(f"{MAPF_LABELS[mapf_method]}")
     ax.set_xlabel('Robots')
     ax.set_ylabel('Success rate')
     ax.set_ylim(-0.05, 1.05)
     ax.grid(True, ls='--', lw=0.5)
 
-    if sub.empty:
-        return
-    for v in values:
+    for v in all_values:
         d = sub[sub[param] == v]
+        if d.empty:
+            continue
         grp = d.groupby('robots')['solved'].mean().reset_index()
         ax.plot(grp['robots'], grp['solved'], marker='o', label=str(v), color=palette[v])
-    ax.legend(title=param.replace('_', ' '), fontsize=8)
+    ax.legend(title=param.replace('_', ' '))
 
 
 def _time_by_param(ax, df, param, fixed_val, mapf_method, robot_counts):
     """Line plot: planning time (log) vs robots, hue = param value."""
+    # Build palette from all param values across both methods so CBS and A* share colours
+    ref_mask = pd.Series(True, index=df.index)
+    if fixed_val is not None:
+        other = 'robot_cell_size_ratio' if param == 'region_size' else 'region_size'
+        ref_mask &= (df[other] == fixed_val)
+    if robot_counts is not None:
+        ref_mask &= df['robots'].isin(robot_counts)
+    all_values = sorted(df[ref_mask][param].unique())
+    palette = _seq_palette(all_values)
+
     mask = (df['mapf_method'] == mapf_method) & (df['solved'] == True)
     if fixed_val is not None:
         other = 'robot_cell_size_ratio' if param == 'region_size' else 'region_size'
@@ -82,23 +107,23 @@ def _time_by_param(ax, df, param, fixed_val, mapf_method, robot_counts):
         mask &= df['robots'].isin(robot_counts)
     sub = df[mask].copy()
 
-    values = sorted(sub[param].unique())
-    palette = _seq_palette(values)
-
     ax.set_title(f"{MAPF_LABELS[mapf_method]}")
     ax.set_xlabel('Robots')
     ax.set_ylabel('Planning time (s)')
     ax.set_yscale('log')
     ax.grid(True, which='both', ls='--', lw=0.5)
 
-    if sub.empty:
-        return
-    for v in values:
+    for v in all_values:
         d = sub[sub[param] == v]
+        if d.empty:
+            # Value exists but was never solved — keep it in the legend as a dashed marker
+            ax.plot([], [], marker='o', linestyle='--', alpha=0.5,
+                    label=f'{v} (no data)', color=palette[v])
+            continue
         grp = d.groupby('robots')['planning_time'].agg(['mean', 'std']).reset_index()
         ax.errorbar(grp['robots'], grp['mean'], yerr=grp['std'],
                     marker='o', capsize=3, label=str(v), color=palette[v])
-    ax.legend(title=param.replace('_', ' '), fontsize=8)
+    ax.legend(title=param.replace('_', ' '))
 
 
 def _cbs_vs_astar(axes, df, default_region_size, default_ratio, robot_counts):
@@ -176,6 +201,16 @@ def _heatmap(ax, df, metric, mapf_method, robot_counts, fmt='.2f', cmap='YlGnBu'
 
 def _makespan_by_param(ax, df, param, fixed_val, mapf_method, robot_counts):
     """Line plot: makespan vs robots, hue = param value (solved only)."""
+    # Build palette from all param values across both methods so CBS and A* share colours
+    ref_mask = pd.Series(True, index=df.index)
+    if fixed_val is not None:
+        other = 'robot_cell_size_ratio' if param == 'region_size' else 'region_size'
+        ref_mask &= (df[other] == fixed_val)
+    if robot_counts is not None:
+        ref_mask &= df['robots'].isin(robot_counts)
+    all_values = sorted(df[ref_mask][param].unique())
+    palette = _seq_palette(all_values)
+
     mask = (df['mapf_method'] == mapf_method) & df['makespan'].notna()
     if fixed_val is not None:
         other = 'robot_cell_size_ratio' if param == 'region_size' else 'region_size'
@@ -184,9 +219,6 @@ def _makespan_by_param(ax, df, param, fixed_val, mapf_method, robot_counts):
         mask &= df['robots'].isin(robot_counts)
     sub = df[mask].copy()
 
-    values = sorted(sub[param].unique())
-    palette = _seq_palette(values)
-
     ax.set_title(f"{MAPF_LABELS[mapf_method]}")
     ax.set_xlabel('Robots')
     ax.set_ylabel('Makespan')
@@ -194,12 +226,14 @@ def _makespan_by_param(ax, df, param, fixed_val, mapf_method, robot_counts):
 
     if sub.empty:
         return
-    for v in values:
+    for v in all_values:
         d = sub[sub[param] == v]
+        if d.empty:
+            continue
         grp = d.groupby('robots')['makespan'].agg(['mean', 'std']).reset_index()
         ax.errorbar(grp['robots'], grp['mean'], yerr=grp['std'],
                     marker='o', capsize=3, label=str(v), color=palette[v])
-    ax.legend(title=param.replace('_', ' '), fontsize=8)
+    ax.legend(title=param.replace('_', ' '))
 
 
 # ── resolution_stats draw functions ──────────────────────────────────────────
@@ -249,7 +283,7 @@ def _time_breakdown(ax, df, mapf_method, robot_counts):
         bottom += vals
     ax.set_xticks(x)
     ax.set_xticklabels(robots)
-    ax.legend(fontsize=8)
+    ax.legend()
 
 
 def _conflict_resolution(ax, df, mapf_method, robot_counts):
@@ -272,7 +306,7 @@ def _conflict_resolution(ax, df, mapf_method, robot_counts):
             continue
         grp = sub.groupby('robots')[col].mean().reset_index()
         ax.plot(grp['robots'], grp[col], marker='o', label=label, color=color)
-    ax.legend(fontsize=8)
+    ax.legend()
 
 
 def _strategy_usage(ax, df, mapf_method, robot_counts):
@@ -304,7 +338,7 @@ def _strategy_usage(ax, df, mapf_method, robot_counts):
     ax.bar(x + w / 2, successes, w, label='Successes', color='#26A69A')
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=15, ha='right')
-    ax.legend(fontsize=8)
+    ax.legend()
 
 
 # ── page builders ─────────────────────────────────────────────────────────────
@@ -316,6 +350,23 @@ def _make_param_sweep_page(df, param, fixed_val, robot_counts, draw_fn, suptitle
     fig.suptitle(f"{suptitle}  ({desc})", fontsize=13)
     for ax, method in zip(axes, ['cbs', 'astar']):
         draw_fn(ax, df, param, fixed_val, method, robot_counts)
+    fig.tight_layout()
+    return fig
+
+
+def _make_single_param_sweep(df, param, fixed_val, robot_counts, draw_fn, method):
+    """Single-panel figure for one MAPF method, no title (filename conveys context)."""
+    fig, ax = plt.subplots(1, 1, figsize=(9, 5))
+    draw_fn(ax, df, param, fixed_val, method, robot_counts)
+    ax.set_title('')
+    ax.xaxis.label.set_size(20)
+    ax.yaxis.label.set_size(20)
+    ax.tick_params(labelsize=18)
+    legend = ax.get_legend()
+    if legend is not None:
+        legend.get_title().set_fontsize(18)
+        for text in legend.get_texts():
+            text.set_fontsize(16)
     fig.tight_layout()
     return fig
 
@@ -393,9 +444,10 @@ def main():
         ("p1_region_size_success",
          _make_param_sweep_page(df, 'region_size', drat, robot_counts,
                                 _success_by_param, 'Region size → Success Rate', 'ratio')),
-        ("p2_region_size_time",
-         _make_param_sweep_page(df, 'region_size', drat, robot_counts,
-                                _time_by_param, 'Region size → Planning Time', 'ratio')),
+        ("p2_region_size_time_cbs",
+         _make_single_param_sweep(df, 'region_size', drat, robot_counts, _time_by_param, 'cbs')),
+        ("p2_region_size_time_astar",
+         _make_single_param_sweep(df, 'region_size', drat, robot_counts, _time_by_param, 'astar')),
         ("p3_ratio_success",
          _make_param_sweep_page(df, 'robot_cell_size_ratio', drs, robot_counts,
                                 _success_by_param, 'Robot cell ratio → Success Rate', 'region_size')),

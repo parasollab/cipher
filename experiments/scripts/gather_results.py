@@ -9,7 +9,7 @@ def compute_makespan(output):
     paths = output.get('result', [])
     longest = 0
     for path_node in paths:
-        path = path_node.get('states')
+        path = path_node.get('states') or []
         prev_state = None
         path_length = 0
         for state in path:
@@ -24,7 +24,7 @@ def compute_sum_of_costs(output):
     paths = output.get('result', [])
     total_cost = 0
     for path_node in paths:
-        path = path_node.get('states')
+        path = path_node.get('states') or []
         prev_state = None
         path_length = 0
         for state in path:

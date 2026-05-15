@@ -7,18 +7,20 @@ import yaml
 import numpy as np
 
 METHOD_EXECUTABLES = {
-    'geometric_cipher':   'geometric_cipher',
-    'coupled_rrt':        'geometric_coupled_rrt',
-    'decoupled_rrt':      'geometric_decoupled_rrt',
-    'srrt':               'srrt',
-    'drrt':               'drrt',
-    'arc':                'arc',
-    'kino_coupled_rrt':   'kinodynamic_coupled_rrt',
-    'kino_decoupled_rrt': 'kinodynamic_decoupled_rrt',
-    'kcbs':               'db-CBS/main_kcbs',
-    'db_cbs':             'db-CBS/db_cbs',
-    'k_arc':              'k_arc',
-    'kinodynamic_cipher': 'kinodynamic_cipher',
+    'geometric_cipher':            'geometric_cipher',
+    'coupled_rrt':                 'geometric_coupled_rrt',
+    'decoupled_rrt':               'geometric_decoupled_rrt',
+    'decoupled_guided_rrt':        'geometric_decoupled_guided_rrt',
+    'srrt':                        'srrt',
+    'drrt':                        'drrt',
+    'arc':                         'arc',
+    'kino_coupled_rrt':            'kinodynamic_coupled_rrt',
+    'kino_decoupled_rrt':          'kinodynamic_decoupled_rrt',
+    'kino_decoupled_guided_rrt':   'kinodynamic_decoupled_guided_rrt',
+    'kcbs':                        'db-CBS/main_kcbs',
+    'db_cbs':                      'db-CBS/db_cbs',
+    'k_arc':                       'k_arc',
+    'kinodynamic_cipher':          'kinodynamic_cipher',
 }
 
 def get_extra_args(method, output_full_path, timeout):
