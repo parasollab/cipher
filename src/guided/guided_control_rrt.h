@@ -78,14 +78,9 @@ public:
 
             if (coverage_map[region_idx] > min_coverage) {
                 if (region_idx < (int)decomp_path.size()-1) {
-                    std::cout << "[GuidedControlRRT] region " << decomp_path[region_idx]
-                              << " covered, advancing to region_idx=" << region_idx + 1
-                              << " (region=" << decomp_path[region_idx + 1] << ")" << std::endl;
                     region_idx++;
                     valid_regions.insert(decomp_path[region_idx]);
                 } else {
-                    if (!sample_goal)
-                        std::cout << "[GuidedControlRRT] all regions covered, biasing toward goal" << std::endl;
                     sample_goal = true;
                 }
             }
@@ -112,12 +107,6 @@ public:
             /* sample a random control that attempts to go towards the random state, and also sample a control duration */
             unsigned int cd = controlSampler_->sampleToTest(rctrl, nmotion->control, nmotion->state, rmotion->state, nsteps);
 
-            std::cout << "[GuidedControlRRT] iteration=" << iteration
-                      << " region_idx=" << region_idx
-                      << " nmotion steps=" << nmotion->steps
-                      << " sampled control duration cd=" << cd
-                      << std::endl;
-        
             std::vector<Motion *> extension;
 
             if (addIntermediateStates_)
@@ -126,48 +115,35 @@ public:
                 std::vector<ob::State *> pstates;
                 cd = siC_->propagateWhileValid(nmotion->state, rctrl, cd, pstates, true);
 
-                // std::cout << "[GuidedControlRRT] propagateWhileValid returned cd=" << cd
-                //           << " valid intermediate states=" << pstates.size() << std::endl;
-
                 if (cd >= siC_->getMinControlDuration())
                 {
-
-                    bool ends_in_region = false;
-                    std::cout << "EndRegion: " << decomposition_->locateSubRegion(pstates.back()) << "!=" << decomp_path[region_idx] << std::endl;
-                    if (decomposition_->locateSubRegion(pstates.back()) == decomp_path[region_idx]) {
-                        // coverage_map[region_idx] += 1;
-                        ends_in_region = true;
-                    }
-
-                    int skipped = 0;
                     Motion *lastmotion = nmotion;
                     bool solved = false;
                     size_t p = 0;
                     for (; p < pstates.size(); ++p)
                     {
-                        /* create a motion */
                         auto *motion = new Motion();
                         motion->state = pstates[p];
 
-                        // Check if state enters any other regions. If so, pstates are invalid
                         int new_region_idx = decomposition_->locateSubRegion(motion->state);
-                        // std::cout << "[GuidedControlRRT] new_region_idx=" << new_region_idx << "!=" << decomp_path[region_idx] << std::endl;
-                        
-                        // If state enters a different region than the current one or the previous one (if > 0), skip it
-                        if ((region_idx > 0 && new_region_idx != decomp_path[region_idx - 1]) && new_region_idx != decomp_path[region_idx]) {
+
+                        // Accept only states in the current or immediately-previous region.
+                        // On the first out-of-region state, stop and free the remainder.
+                        if ((region_idx > 0 && new_region_idx != decomp_path[region_idx - 1]) &&
+                            new_region_idx != decomp_path[region_idx])
+                        {
                             si_->freeState(motion->state);
                             delete motion;
-                            ++skipped;
-                            continue;
+                            while (++p < pstates.size())
+                                si_->freeState(pstates[p]);
+                            break;
                         }
 
-                        // we need multiple copies of rctrl
                         motion->control = siC_->allocControl();
                         siC_->copyControl(motion->control, rctrl);
                         motion->steps = 1;
                         motion->parent = lastmotion;
                         lastmotion = motion;
-                        // nn_->add(motion);
                         extension.push_back(motion);
                         double dist = 0.0;
                         solved = goal->isSatisfied(motion->state, &dist);
@@ -184,23 +160,18 @@ public:
                         }
                     }
 
-                    // if (skipped > 0)
-                    //     std::cout << "[GuidedGeoRRT] skipped " << skipped
-                    //               << " intermediate states (wrong region)" << std::endl;
+                    // Add the valid prefix to the tree (always, even if we stopped early).
+                    if (!extension.empty())
+                    {
+                        for (auto *m : extension)
+                            nn_->add(m);
 
-                    if (skipped == 0) {
-                        for (std::size_t i = 0; i < extension.size(); ++i)
-                        {
-                            nn_->add(extension[i]);
-                        }
-
-                        if (ends_in_region)
-                        {
+                        if (decomposition_->locateSubRegion(extension.back()->state) ==
+                            decomp_path[region_idx])
                             coverage_map[region_idx] += 1;
-                        }
                     }
 
-                    // free any states after we hit the goal
+                    // Free states that come after a solution.
                     while (++p < pstates.size())
                         si_->freeState(pstates[p]);
                     if (solved)

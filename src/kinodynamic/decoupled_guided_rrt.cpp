@@ -242,8 +242,9 @@ int main(int argc, char** argv)
     // DOUT << "Running CBS (capacity=" << cbs_capacity
     //           << ", timeout=" << cbs_timeout << "s)..." << std::endl;
 
-    ForbiddenEdgeSet structurally_forbidden_edges;
-    if (check_transition_feasibility) {
+    auto computeForbiddenEdges = [&]() -> ForbiddenEdgeSet {
+        ForbiddenEdgeSet forbidden;
+        if (!check_transition_feasibility) return forbidden;
         float max_radius = 0.0f;
         for (auto& robot : robots) {
             for (size_t p = 0; p < robot->numParts(); ++p) {
@@ -277,9 +278,19 @@ int main(int argc, char** argv)
                 if (seg_hi <= seg_lo) continue;
                 bool shared_in_y = (std::abs(ba.high[0] - bb.low[0]) < 1e-9 ||
                                      std::abs(bb.high[0] - ba.low[0]) < 1e-9);
+                // Coordinate of the shared boundary in the perpendicular dimension.
+                double boundary_perp = shared_in_y
+                    ? ((ba.high[0] < bb.high[0]) ? ba.high[0] : ba.low[0])
+                    : ((ba.high[1] < bb.high[1]) ? ba.high[1] : ba.low[1]);
                 std::vector<std::pair<double,double>> covered;
                 for (auto* obs : obstacles) {
                     const auto& aabb = obs->getAABB();
+                    // Skip obstacles that don't straddle the shared boundary.
+                    if (shared_in_y) {
+                        if ((double)aabb.min_[0] > boundary_perp || (double)aabb.max_[0] < boundary_perp) continue;
+                    } else {
+                        if ((double)aabb.min_[1] > boundary_perp || (double)aabb.max_[1] < boundary_perp) continue;
+                    }
                     double lo = shared_in_y ? (double)aabb.min_[1] : (double)aabb.min_[0];
                     double hi = shared_in_y ? (double)aabb.max_[1] : (double)aabb.max_[0];
                     double clo = std::max(lo, seg_lo);
@@ -294,12 +305,15 @@ int main(int argc, char** argv)
                 }
                 longest_free = std::max(longest_free, seg_hi - cur);
                 if (longest_free < threshold) {
-                    structurally_forbidden_edges.insert({a, b});
-                    structurally_forbidden_edges.insert({b, a});
+                    forbidden.insert({a, b});
+                    forbidden.insert({b, a});
                 }
             }
         }
-    }
+        return forbidden;
+    };
+
+    ForbiddenEdgeSet structurally_forbidden_edges = computeForbiddenEdges();
 
     std::vector<std::vector<int>> region_paths;
     YAML::Node viz_mapf_event;
@@ -326,6 +340,7 @@ int main(int argc, char** argv)
                 cbs_failed = true;
                 break;
             }
+            structurally_forbidden_edges = computeForbiddenEdges();
         }
         ++cbs_attempts;
     }
